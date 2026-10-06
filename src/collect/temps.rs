@@ -63,6 +63,11 @@ pub fn temp_by_label(hwmon: &Path, label: &str) -> Option<f32> {
 
 pub fn subdirs(dir: impl AsRef<Path>) -> Vec<PathBuf> {
     fs::read_dir(dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect()
+        })
         .unwrap_or_default()
 }

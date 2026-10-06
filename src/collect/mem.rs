@@ -19,7 +19,9 @@ pub struct Mem {
 
 impl Mem {
     pub fn new() -> Self {
-        Self { dimms: temps::hwmon_named("spd5118") }
+        Self {
+            dimms: temps::hwmon_named("spd5118"),
+        }
     }
 
     pub fn sample(&self, sys: &System) -> MemInfo {
@@ -29,7 +31,11 @@ impl Mem {
             swap_total: sys.total_swap(),
             swap_used: sys.used_swap(),
             pressure: pressure(sys),
-            dimm_temps: self.dimms.iter().filter_map(|d| temps::first_temp(d)).collect(),
+            dimm_temps: self
+                .dimms
+                .iter()
+                .filter_map(|d| temps::first_temp(d))
+                .collect(),
         }
     }
 }
@@ -46,7 +52,11 @@ fn pressure(sys: &System) -> MemPressure {
     } else {
         PressureLevel::Normal
     };
-    MemPressure { available_pct, stall, level }
+    MemPressure {
+        available_pct,
+        stall,
+        level,
+    }
 }
 
 /// The `some avg10` figure from /proc/pressure/memory, whose first line looks
@@ -54,5 +64,6 @@ fn pressure(sys: &System) -> MemPressure {
 fn stall() -> Option<f32> {
     let psi = temps::read_string("/proc/pressure/memory")?;
     let line = psi.lines().find(|l| l.starts_with("some"))?;
-    line.split_whitespace().find_map(|f| f.strip_prefix("avg10=")?.parse().ok())
+    line.split_whitespace()
+        .find_map(|f| f.strip_prefix("avg10=")?.parse().ok())
 }

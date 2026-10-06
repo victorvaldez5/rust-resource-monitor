@@ -42,7 +42,11 @@ impl Pinger {
             .iter()
             .filter_map(|(label, latest)| {
                 let (host, ms) = *latest.lock().unwrap();
-                Some(PingTarget { label: label.to_string(), host: host?.to_string(), ms })
+                Some(PingTarget {
+                    label: label.to_string(),
+                    host: host?.to_string(),
+                    ms,
+                })
             })
             .collect()
     }

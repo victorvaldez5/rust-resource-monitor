@@ -29,7 +29,10 @@ fn main() -> eframe::Result {
             for row in ui::tree::rows(&procs, &Default::default()) {
                 let p = &procs[row.index];
                 let indent = "  ".repeat(row.depth);
-                println!("{:>7} {:<12} {:<16} {indent}{}", p.pid, p.user, p.group, p.name);
+                println!(
+                    "{:>7} {:<12} {:<16} {indent}{}",
+                    p.pid, p.user, p.group, p.name
+                );
             }
         } else {
             println!("{snapshot:#?}");

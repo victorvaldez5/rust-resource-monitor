@@ -55,7 +55,10 @@ pub struct Sort {
 impl Default for Sort {
     /// Most recently active first.
     fn default() -> Self {
-        Self { key: Col::Active, descending: true }
+        Self {
+            key: Col::Active,
+            descending: true,
+        }
     }
 }
 
@@ -66,7 +69,10 @@ impl Sort {
         if self.key == key {
             self.descending = !self.descending;
         } else {
-            *self = Self { key, descending: !matches!(key, Col::Name | Col::Pid | Col::User | Col::Group) };
+            *self = Self {
+                key,
+                descending: !matches!(key, Col::Name | Col::Pid | Col::User | Col::Group),
+            };
         }
     }
 
@@ -109,7 +115,8 @@ fn sort(records: &mut [ProcRecord], sort: Sort) {
         };
         let ord = if sort.descending { ord.reverse() } else { ord };
         // Keep ties in a stable, readable order.
-        ord.then_with(|| a.name.cmp(&b.name)).then(a.pid.cmp(&b.pid))
+        ord.then_with(|| a.name.cmp(&b.name))
+            .then(a.pid.cmp(&b.pid))
     });
 }
 
@@ -130,7 +137,9 @@ fn value(r: &ProcRecord, count: usize, col: Col, now: u64) -> String {
         Col::Pid => r.pid.to_string(),
         Col::User => r.user.clone(),
         Col::Group => r.group.clone(),
-        Col::Uptime => fmt_duration(if r.running { now } else { r.last_seen }.saturating_sub(r.start_time)),
+        Col::Uptime => {
+            fmt_duration(if r.running { now } else { r.last_seen }.saturating_sub(r.start_time))
+        }
         Col::Active => match r.last_active {
             Some(t) if now.saturating_sub(t) < 2 => "now".to_string(),
             Some(t) => format!("{} ago", fmt_duration(now.saturating_sub(t))),
@@ -196,23 +205,22 @@ fn combine(members: &[&ProcRecord]) -> ProcRecord {
 
 pub fn show(ui: &mut Ui, records: &[ProcRecord], state: &mut Sort, expanded: &mut HashSet<String>) {
     let running = records.iter().filter(|r| r.running).count();
-    ui.weak(format!("{running} running · {} exited since the monitor started", records.len() - running));
+    ui.weak(format!(
+        "{running} running · {} exited since the monitor started",
+        records.len() - running
+    ));
 
     let height = ui.spacing().interact_size.y;
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             for (col, title, width) in COLUMNS.iter().rev() {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(*width, height),
-                    cell_layout(*col),
-                    |ui| {
-                        ui.set_min_width(*width);
-                        let label = RichText::new(format!("{title}{}", state.arrow(*col))).strong();
-                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                            state.click(*col);
-                        }
-                    },
-                );
+                ui.allocate_ui_with_layout(egui::vec2(*width, height), cell_layout(*col), |ui| {
+                    ui.set_min_width(*width);
+                    let label = RichText::new(format!("{title}{}", state.arrow(*col))).strong();
+                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                        state.click(*col);
+                    }
+                });
             }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let label = RichText::new(format!("Process{}", state.arrow(Col::Name))).strong();
@@ -241,60 +249,142 @@ pub fn show(ui: &mut Ui, records: &[ProcRecord], state: &mut Sort, expanded: &mu
     for (total, mut members) in groups {
         let count = members.len();
         let open = count > 1 && expanded.contains(&total.name);
-        lines.push(Line { record: total, count, child: false, open });
+        lines.push(Line {
+            record: total,
+            count,
+            child: false,
+            open,
+        });
         if open {
             sort(&mut members, *state);
-            lines.extend(members.into_iter().map(|record| Line { record, count: 1, child: true, open: false }));
+            lines.extend(members.into_iter().map(|record| Line {
+                record,
+                count: 1,
+                child: true,
+                open: false,
+            }));
         }
     }
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    egui::ScrollArea::vertical().auto_shrink(false).show_rows(ui, height, lines.len(), |ui, range| {
-        for line in &lines[range] {
-            let (r, count) = (&line.record, line.count);
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    for (col, _, width) in COLUMNS.iter().rev() {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(*width, height),
-                            cell_layout(*col),
-                            |ui| {
-                                ui.set_min_width(*width);
-                                let text = RichText::new(value(r, count, *col, now));
-                                let text = if matches!(col, Col::User | Col::Group) { text } else { text.monospace() };
-                                ui.add(egui::Label::new(if r.running { text } else { text.weak() }).truncate());
-                            },
-                        );
-                    }
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        let arrow = match (count > 1, line.open) {
-                            (false, _) => "",
-                            (true, true) => "⏷ ",
-                            (true, false) => "⏵ ",
-                        };
-                        let indent = if line.child { "      " } else { "" };
-                        let name = RichText::new(format!("{indent}{arrow}{}", r.name));
-                        let name = if r.running { name } else { name.weak() };
-                        let label = egui::Label::new(name).truncate().sense(egui::Sense::click());
-                        let response = ui.add(label);
-                        if response.clicked() && count > 1 && !expanded.remove(&r.name) {
-                            expanded.insert(r.name.clone());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+        ui,
+        height,
+        lines.len(),
+        |ui, range| {
+            for line in &lines[range] {
+                let (r, count) = (&line.record, line.count);
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        for (col, _, width) in COLUMNS.iter().rev() {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(*width, height),
+                                cell_layout(*col),
+                                |ui| {
+                                    ui.set_min_width(*width);
+                                    let text = RichText::new(value(r, count, *col, now));
+                                    let text = if matches!(col, Col::User | Col::Group) {
+                                        text
+                                    } else {
+                                        text.monospace()
+                                    };
+                                    ui.add(
+                                        egui::Label::new(if r.running {
+                                            text
+                                        } else {
+                                            text.weak()
+                                        })
+                                        .truncate(),
+                                    );
+                                },
+                            );
                         }
-                        response.on_hover_ui(|ui| {
-                            if count > 1 {
-                                ui.strong(format!("{} ({count} processes)", r.name));
-                            } else {
-                                ui.strong(format!("{} (pid {})", r.name, r.pid));
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            let arrow = match (count > 1, line.open) {
+                                (false, _) => "",
+                                (true, true) => "⏷ ",
+                                (true, false) => "⏵ ",
+                            };
+                            let indent = if line.child { "      " } else { "" };
+                            let name = RichText::new(format!("{indent}{arrow}{}", r.name));
+                            let name = if r.running { name } else { name.weak() };
+                            let label = egui::Label::new(name)
+                                .truncate()
+                                .sense(egui::Sense::click());
+                            let response = ui.add(label);
+                            if response.clicked() && count > 1 && !expanded.remove(&r.name) {
+                                expanded.insert(r.name.clone());
                             }
-                            ui.label(if r.running { "Running" } else { "Exited" });
-                            if !r.group.is_empty() {
-                                ui.weak(format!("Belongs to {}", r.group));
-                            }
-                            ui.weak(format!("Average CPU {:.1}%", r.avg_cpu()));
+                            response.on_hover_ui(|ui| {
+                                if count > 1 {
+                                    ui.strong(format!("{} ({count} processes)", r.name));
+                                } else {
+                                    ui.strong(format!("{} (pid {})", r.name, r.pid));
+                                }
+                                ui.label(if r.running { "Running" } else { "Exited" });
+                                if !r.group.is_empty() {
+                                    ui.weak(format!("Belongs to {}", r.group));
+                                }
+                                ui.weak(format!("Average CPU {:.1}%", r.avg_cpu()));
+                            });
                         });
                     });
                 });
-            });
+            }
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(name: &str, pid: u32, cpu: f32, user: &str) -> ProcRecord {
+        ProcRecord {
+            pid,
+            name: name.into(),
+            user: user.into(),
+            running: true,
+            samples: 1,
+            usage: ProcUsage {
+                cpu,
+                ..Default::default()
+            },
+            ..Default::default()
         }
-    });
+    }
+
+    #[test]
+    fn combine_adds_usage_and_flags_mixed_users() {
+        let (a, b) = (record("zen", 1, 1.5, "me"), record("zen", 2, 2.0, "root"));
+        let total = combine(&[&a, &b]);
+        assert_eq!(total.usage.cpu, 3.5);
+        assert_eq!(total.user, "various");
+    }
+
+    #[test]
+    fn first_click_sorts_names_a_to_z_and_usage_biggest_first() {
+        let mut sort_state = Sort::default();
+        sort_state.click(Col::Name);
+        assert!(!sort_state.descending);
+        sort_state.click(Col::Cpu);
+        assert!(sort_state.descending);
+        sort_state.click(Col::Cpu);
+        assert!(!sort_state.descending);
+    }
+
+    #[test]
+    fn sorts_by_cpu_descending() {
+        let mut rows = vec![record("a", 1, 1.0, ""), record("b", 2, 9.0, "")];
+        sort(
+            &mut rows,
+            Sort {
+                key: Col::Cpu,
+                descending: true,
+            },
+        );
+        assert_eq!(rows[0].name, "b");
+    }
 }

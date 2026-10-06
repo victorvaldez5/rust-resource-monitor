@@ -11,7 +11,11 @@ use crate::snapshot::{ProcInfo, ProcUsage};
 pub fn display_name(p: &Process) -> String {
     p.exe()
         .and_then(|e| e.file_name())
-        .map(|n| n.to_string_lossy().trim_end_matches(" (deleted)").to_string())
+        .map(|n| {
+            n.to_string_lossy()
+                .trim_end_matches(" (deleted)")
+                .to_string()
+        })
         .filter(|n| n.chars().any(char::is_alphabetic))
         .unwrap_or_else(|| p.name().to_string_lossy().into_owned())
 }

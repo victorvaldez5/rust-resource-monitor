@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
+use crate::snapshot::GpuInfo;
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
-use nvml_wrapper::enums::device::UsedGpuMemory;use crate::snapshot::GpuInfo;
+use nvml_wrapper::enums::device::UsedGpuMemory;
 
 /// How far back to ask NVML for per-process utilization samples, in microseconds.
 /// Wider than the 1s refresh so a process doesn't flicker to 0% between samples.
@@ -19,11 +20,16 @@ impl Nvidia {
     pub fn new() -> Option<Self> {
         let nvml = Nvml::init().ok()?;
         let count = nvml.device_count().ok()? as usize;
-        Some(Self { nvml, newest_sample: vec![0; count] })
+        Some(Self {
+            nvml,
+            newest_sample: vec![0; count],
+        })
     }
 
     pub fn sample(&mut self) -> Vec<GpuInfo> {
-        (0..self.newest_sample.len()).filter_map(|i| self.sample_device(i)).collect()
+        (0..self.newest_sample.len())
+            .filter_map(|i| self.sample_device(i))
+            .collect()
     }
 
     fn sample_device(&mut self, index: usize) -> Option<GpuInfo> {
@@ -32,7 +38,10 @@ impl Nvidia {
 
         // pid -> VRAM bytes. A process can appear in both lists.
         let mut vram: HashMap<u32, u64> = HashMap::new();
-        let lists = [dev.running_graphics_processes(), dev.running_compute_processes()];
+        let lists = [
+            dev.running_graphics_processes(),
+            dev.running_compute_processes(),
+        ];
         for p in lists.into_iter().flatten().flatten() {
             let bytes = match p.used_gpu_memory {
                 UsedGpuMemory::Used(b) => b,
@@ -56,7 +65,12 @@ impl Nvidia {
 
         let procs = vram
             .iter()
-            .map(|(pid, bytes)| (*pid, [*bytes as f64, util.get(pid).map_or(0, |u| u.1) as f64]))
+            .map(|(pid, bytes)| {
+                (
+                    *pid,
+                    [*bytes as f64, util.get(pid).map_or(0, |u| u.1) as f64],
+                )
+            })
             .collect();
 
         Some(GpuInfo {
@@ -64,7 +78,10 @@ impl Nvidia {
             util: dev.utilization_rates().ok().map(|u| u.gpu as f32),
             vram_used: mem.as_ref().map_or(0, |m| m.used),
             vram_total: mem.as_ref().map_or(0, |m| m.total),
-            temp: dev.temperature(TemperatureSensor::Gpu).ok().map(|t| t as f32),
+            temp: dev
+                .temperature(TemperatureSensor::Gpu)
+                .ok()
+                .map(|t| t as f32),
             power_w: dev.power_usage().ok().map(|mw| mw as f32 / 1000.0),
             fan_pct: dev.fan_speed(0).ok(),
             procs,

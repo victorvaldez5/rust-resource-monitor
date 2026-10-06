@@ -24,7 +24,9 @@ pub struct ProcLog {
 
 impl ProcLog {
     pub fn update(&mut self, procs: &[ProcInfo]) -> Arc<Vec<ProcRecord>> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
         for r in self.records.values_mut() {
             r.running = false;
             r.usage = Default::default();
@@ -32,11 +34,10 @@ impl ProcLog {
         // A pid whose start time has moved on was reused by a new process.
         let mut live = HashMap::new();
         for p in procs {
-            let existing = self
-                .live
-                .get(&p.pid)
-                .copied()
-                .filter(|id| self.records[id].start_time.abs_diff(p.start_time) <= START_TOLERANCE);
+            let existing =
+                self.live.get(&p.pid).copied().filter(|id| {
+                    self.records[id].start_time.abs_diff(p.start_time) <= START_TOLERANCE
+                });
             let id = existing.unwrap_or_else(|| {
                 self.next_id += 1;
                 self.next_id
@@ -67,8 +68,12 @@ impl ProcLog {
 
         self.live = live;
 
-        let mut exited: Vec<_> =
-            self.records.iter().filter(|(_, r)| !r.running).map(|(k, r)| (*k, r.last_seen)).collect();
+        let mut exited: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(_, r)| !r.running)
+            .map(|(k, r)| (*k, r.last_seen))
+            .collect();
         if exited.len() > MAX_EXITED {
             exited.sort_by_key(|(_, seen)| *seen);
             for (key, _) in &exited[..exited.len() - MAX_EXITED] {
@@ -76,5 +81,63 @@ impl ProcLog {
             }
         }
         Arc::new(self.records.values().cloned().collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snapshot::ProcUsage;
+
+    fn proc(pid: u32, start_time: u64, cpu: f32) -> ProcInfo {
+        ProcInfo {
+            pid,
+            name: format!("p{pid}"),
+            start_time,
+            usage: ProcUsage {
+                cpu,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn drifting_start_time_is_the_same_process() {
+        let mut log = ProcLog::default();
+        log.update(&[proc(10, 1000, 0.0)]);
+        let records = log.update(&[proc(10, 1001, 0.0)]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].samples, 2);
+    }
+
+    #[test]
+    fn reused_pid_is_a_new_process() {
+        let mut log = ProcLog::default();
+        log.update(&[proc(10, 1000, 0.0)]);
+        let records = log.update(&[proc(10, 5000, 0.0)]);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records.iter().filter(|r| r.running).count(), 1);
+    }
+
+    #[test]
+    fn exited_process_is_kept_and_idle() {
+        let mut log = ProcLog::default();
+        log.update(&[proc(10, 1000, 50.0)]);
+        let records = log.update(&[]);
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].running);
+        assert_eq!(records[0].usage.cpu, 0.0);
+        assert!(records[0].last_active.is_some());
+    }
+
+    #[test]
+    fn only_the_newest_exited_are_kept() {
+        let mut log = ProcLog::default();
+        let all: Vec<_> = (0..MAX_EXITED as u32 + 10)
+            .map(|i| proc(i, 1000, 0.0))
+            .collect();
+        log.update(&all);
+        assert_eq!(log.update(&[]).len(), MAX_EXITED);
     }
 }

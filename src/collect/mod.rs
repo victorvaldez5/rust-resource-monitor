@@ -73,7 +73,14 @@ impl Collector {
         }
 
         let net = self.net.sample(&self.sys, secs);
-        let procs = procs::list(&self.sys, &owners, &self.users, &gpu_procs, self.net.per_pid(), secs);
+        let procs = procs::list(
+            &self.sys,
+            &owners,
+            &self.users,
+            &gpu_procs,
+            self.net.per_pid(),
+            secs,
+        );
         let proc_log = self.proc_log.update(&procs);
 
         Snapshot {

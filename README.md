@@ -96,6 +96,6 @@ Anything that is missing is left out of the window; the rest still works.
   processes, so other users' and system processes are missing from the storage and
   network lists.
 - Per-process network usage is measured from TCP connections. UDP and QUIC (HTTP/3)
-  traffic is shown as a single "Not attributed" row.
+  traffic is not counted per process.
 - AMD GPUs have no per-process list.
 - Intel GPUs are not supported.

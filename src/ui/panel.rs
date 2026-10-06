@@ -45,7 +45,9 @@ pub fn temp_text(celsius: f32) -> RichText {
     } else {
         GREEN
     };
-    RichText::new(format!("{celsius:.0} °C")).color(color).strong()
+    RichText::new(format!("{celsius:.0} °C"))
+        .color(color)
+        .strong()
 }
 
 /// Ping time, coloured by how slow it is.
@@ -57,7 +59,11 @@ pub fn latency_text(ms: f32) -> RichText {
     } else {
         GREEN
     };
-    let text = if ms < 10.0 { format!("{ms:.1} ms") } else { format!("{ms:.0} ms") };
+    let text = if ms < 10.0 {
+        format!("{ms:.1} ms")
+    } else {
+        format!("{ms:.0} ms")
+    };
     RichText::new(text).color(color).strong()
 }
 
@@ -81,7 +87,13 @@ pub fn pressure_text(level: PressureLevel) -> RichText {
 }
 
 /// A framed panel with a title on the left and a temperature on the right.
-pub fn section(ui: &mut Ui, title: &str, subtitle: &str, temp: Option<f32>, body: impl FnOnce(&mut Ui)) {
+pub fn section(
+    ui: &mut Ui,
+    title: &str,
+    subtitle: &str,
+    temp: Option<f32>,
+    body: impl FnOnce(&mut Ui),
+) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_width(ui.available_width());
         header(ui, RichText::new(title).heading(), subtitle, temp);
@@ -122,8 +134,11 @@ pub fn history_plot(
         for (name, values, color) in series {
             // Right-align so the newest sample is always at the right edge.
             let offset = HISTORY_LEN - values.len();
-            let points: Vec<[f64; 2]> =
-                values.iter().enumerate().map(|(i, v)| [(offset + i) as f64, *v]).collect();
+            let points: Vec<[f64; 2]> = values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| [(offset + i) as f64, *v])
+                .collect();
             plot_ui.line(Line::new(*name, PlotPoints::from(points)).color(*color));
         }
     });
@@ -142,7 +157,9 @@ pub fn pressure_plot(
             .enumerate()
             // Full-width bars with no gaps read as one solid area.
             .map(|(i, (v, level))| {
-                Bar::new((offset + i) as f64, *v).width(1.0).fill(pressure_color(*level))
+                Bar::new((offset + i) as f64, *v)
+                    .width(1.0)
+                    .fill(pressure_color(*level))
             })
             .collect();
         // No per-bar hover text: the caller puts one tooltip on the whole graph.
@@ -186,7 +203,8 @@ pub fn core_bars(ui: &mut Ui, per_core: &[f32]) {
     let track = ui.visuals().extreme_bg_color;
     for (i, pct) in per_core.iter().enumerate() {
         let x = rect.left() + i as f32 * (width + gap);
-        let slot = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(width, rect.height()));
+        let slot =
+            egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(width, rect.height()));
         ui.painter().rect_filled(slot, 1.0, track);
         let filled = rect.height() * (pct / 100.0).clamp(0.0, 1.0);
         let fill = egui::Rect::from_min_max(egui::pos2(x, rect.bottom() - filled), slot.max);

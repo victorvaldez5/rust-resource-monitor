@@ -33,7 +33,11 @@ impl Storage {
             .filter_map(|b| {
                 let size = temps::read_u64(b.join("size"))? * SECTOR;
                 (size > 0).then(|| PhysicalDrive {
-                    name: b.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                    name: b
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
                     model: temps::read_string(b.join("device/model")).unwrap_or_default(),
                     size,
                     stat: b.join("stat"),
@@ -42,8 +46,15 @@ impl Storage {
             })
             .collect();
         drives.sort_by(|a, b| a.name.cmp(&b.name));
-        let last = drives.iter().filter_map(|d| Some((d.name.clone(), sectors(&d.stat)?))).collect();
-        Self { drives, last, disks: Disks::new_with_refreshed_list() }
+        let last = drives
+            .iter()
+            .filter_map(|d| Some((d.name.clone(), sectors(&d.stat)?)))
+            .collect();
+        Self {
+            drives,
+            last,
+            disks: Disks::new_with_refreshed_list(),
+        }
     }
 
     /// `secs` is the time since the previous sample.

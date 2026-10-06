@@ -16,7 +16,10 @@ impl Cpu {
         let sensor = [("k10temp", "Tctl"), ("coretemp", "Package id 0")]
             .into_iter()
             .find_map(|(driver, label)| {
-                temps::hwmon_named(driver).into_iter().next().map(|dir| (dir, label))
+                temps::hwmon_named(driver)
+                    .into_iter()
+                    .next()
+                    .map(|dir| (dir, label))
             });
         Self { sensor }
     }
@@ -26,7 +29,11 @@ impl Cpu {
             temps::temp_by_label(dir, label).or_else(|| temps::first_temp(dir))
         });
         CpuInfo {
-            name: sys.cpus().first().map(|c| c.brand().trim().to_string()).unwrap_or_default(),
+            name: sys
+                .cpus()
+                .first()
+                .map(|c| c.brand().trim().to_string())
+                .unwrap_or_default(),
             usage: sys.global_cpu_usage(),
             per_core: sys.cpus().iter().map(|c| c.cpu_usage()).collect(),
             temp,

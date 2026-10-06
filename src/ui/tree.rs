@@ -31,7 +31,10 @@ pub fn rows(procs: &[ProcInfo], collapsed: &HashSet<u32>) -> Vec<Row> {
     let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
     let mut roots = Vec::new();
     for (i, p) in procs.iter().enumerate() {
-        match p.parent.filter(|parent| *parent != p.pid && pids.contains(parent)) {
+        match p
+            .parent
+            .filter(|parent| *parent != p.pid && pids.contains(parent))
+        {
             Some(parent) => children.entry(parent).or_default().push(i),
             None => roots.push(i),
         }
@@ -40,8 +43,14 @@ pub fn rows(procs: &[ProcInfo], collapsed: &HashSet<u32>) -> Vec<Row> {
     let mut out = Vec::new();
     let mut stack: Vec<(usize, usize)> = roots.into_iter().rev().map(|i| (i, 0)).collect();
     while let Some((index, depth)) = stack.pop() {
-        let kids = children.get(&procs[index].pid).map_or(&[][..], Vec::as_slice);
-        out.push(Row { index, depth, children: kids.len() });
+        let kids = children
+            .get(&procs[index].pid)
+            .map_or(&[][..], Vec::as_slice);
+        out.push(Row {
+            index,
+            depth,
+            children: kids.len(),
+        });
         if !collapsed.contains(&procs[index].pid) {
             stack.extend(kids.iter().rev().map(|kid| (*kid, depth + 1)));
         }
@@ -67,34 +76,43 @@ pub fn show(ui: &mut Ui, procs: &[ProcInfo], collapsed: &mut HashSet<u32>) {
 
     let rows = rows(procs, collapsed);
     let by_pid: HashMap<u32, &ProcInfo> = procs.iter().map(|p| (p.pid, p)).collect();
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     let height = ui.spacing().interact_size.y;
     // Only the lines scrolled into view are laid out.
-    egui::ScrollArea::vertical().auto_shrink(false).show_rows(ui, height, rows.len(), |ui, range| {
-        for row in &rows[range] {
-            let p = &procs[row.index];
-            let cells = [
-                RichText::new(p.pid.to_string()).monospace(),
-                RichText::new(&p.user),
-                RichText::new(&p.group),
-                RichText::new(format!("{:.1}%", p.usage.cpu)).monospace(),
-                RichText::new(fmt_bytes(p.usage.mem as f64)).monospace(),
-            ];
-            line(ui, cells, |ui| {
-                ui.add_space(row.depth as f32 * INDENT);
-                let arrow = match (row.children, collapsed.contains(&p.pid)) {
-                    (0, _) => "    ",
-                    (_, true) => "⏵ ",
-                    (_, false) => "⏷ ",
-                };
-                let label = egui::Label::new(format!("{arrow}{}", p.name)).truncate().sense(Sense::click());
-                let response = ui.add(label).on_hover_ui(|ui| details(ui, p, &by_pid, now));
-                if response.clicked() && row.children > 0 && !collapsed.remove(&p.pid) {
-                    collapsed.insert(p.pid);
-                }
-            });
-        }
-    });
+    egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+        ui,
+        height,
+        rows.len(),
+        |ui, range| {
+            for row in &rows[range] {
+                let p = &procs[row.index];
+                let cells = [
+                    RichText::new(p.pid.to_string()).monospace(),
+                    RichText::new(&p.user),
+                    RichText::new(&p.group),
+                    RichText::new(format!("{:.1}%", p.usage.cpu)).monospace(),
+                    RichText::new(fmt_bytes(p.usage.mem as f64)).monospace(),
+                ];
+                line(ui, cells, |ui| {
+                    ui.add_space(row.depth as f32 * INDENT);
+                    let arrow = match (row.children, collapsed.contains(&p.pid)) {
+                        (0, _) => "    ",
+                        (_, true) => "⏵ ",
+                        (_, false) => "⏷ ",
+                    };
+                    let label = egui::Label::new(format!("{arrow}{}", p.name))
+                        .truncate()
+                        .sense(Sense::click());
+                    let response = ui.add(label).on_hover_ui(|ui| details(ui, p, &by_pid, now));
+                    if response.clicked() && row.children > 0 && !collapsed.remove(&p.pid) {
+                        collapsed.insert(p.pid);
+                    }
+                });
+            }
+        },
+    );
 }
 
 /// One line: fixed-width columns on the right, and `name` in whatever is left.
@@ -113,10 +131,14 @@ fn line(ui: &mut Ui, cells: [RichText; 5], name: impl FnOnce(&mut Ui)) {
 }
 
 fn cell(ui: &mut Ui, width: f32, layout: Layout, text: RichText) {
-    ui.allocate_ui_with_layout(egui::vec2(width, ui.spacing().interact_size.y), layout, |ui| {
-        ui.set_min_width(width);
-        ui.add(egui::Label::new(text).truncate());
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        layout,
+        |ui| {
+            ui.set_min_width(width);
+            ui.add(egui::Label::new(text).truncate());
+        },
+    );
 }
 
 /// Hover text: who owns the process and the chain of processes that started it.
@@ -136,21 +158,26 @@ fn details(ui: &mut Ui, p: &ProcInfo, by_pid: &HashMap<u32, &ProcInfo>, now: u64
     }
     chain.reverse();
 
-    egui::Grid::new("process_details").num_columns(2).show(ui, |ui| {
-        let mut field = |name: &str, value: &str| {
-            if !value.is_empty() {
-                ui.weak(name);
-                ui.add(egui::Label::new(value).wrap());
-                ui.end_row();
-            }
-        };
-        field("Started by", &chain.join(" › "));
-        field("User", &p.user);
-        field("Belongs to", &p.group);
-        field("Unit", &p.unit);
-        field("Running for", &fmt_duration(now.saturating_sub(p.start_time)));
-        field("Command", &p.cmd);
-    });
+    egui::Grid::new("process_details")
+        .num_columns(2)
+        .show(ui, |ui| {
+            let mut field = |name: &str, value: &str| {
+                if !value.is_empty() {
+                    ui.weak(name);
+                    ui.add(egui::Label::new(value).wrap());
+                    ui.end_row();
+                }
+            };
+            field("Started by", &chain.join(" › "));
+            field("User", &p.user);
+            field("Belongs to", &p.group);
+            field("Unit", &p.unit);
+            field(
+                "Running for",
+                &fmt_duration(now.saturating_sub(p.start_time)),
+            );
+            field("Command", &p.cmd);
+        });
 }
 
 pub fn fmt_duration(secs: u64) -> String {

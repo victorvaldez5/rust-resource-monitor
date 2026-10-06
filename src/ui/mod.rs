@@ -33,7 +33,13 @@ impl App {
         /// kthreadd, the parent of every kernel thread. There are hundreds
         /// of them, so they start out folded away.
         const KTHREADD: u32 = 2;
-        Self { shared, view: View::Hardware, collapsed: HashSet::from([KTHREADD]), history_sort: Default::default(), history_open: HashSet::new() }
+        Self {
+            shared,
+            view: View::Hardware,
+            collapsed: HashSet::from([KTHREADD]),
+            history_sort: Default::default(),
+            history_open: HashSet::new(),
+        }
     }
 }
 
@@ -50,18 +56,25 @@ impl eframe::App for App {
             ui.separator();
             match self.view {
                 View::Hardware => {
-                    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                        ui.columns(2, |cols| {
-                            cpu_panel(&mut cols[0], &state);
-                            mem_panel(&mut cols[0], &state);
-                            net_panel(&mut cols[0], &state);
-                            gpu_panel(&mut cols[1], &state);
-                            storage_panel(&mut cols[1], &state);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            ui.columns(2, |cols| {
+                                cpu_panel(&mut cols[0], &state);
+                                mem_panel(&mut cols[0], &state);
+                                net_panel(&mut cols[0], &state);
+                                gpu_panel(&mut cols[1], &state);
+                                storage_panel(&mut cols[1], &state);
+                            });
                         });
-                    });
                 }
                 View::History => {
-                    history::show(ui, &state.snapshot.proc_log, &mut self.history_sort, &mut self.history_open);
+                    history::show(
+                        ui,
+                        &state.snapshot.proc_log,
+                        &mut self.history_sort,
+                        &mut self.history_open,
+                    );
                 }
                 View::Tree => tree::show(ui, &state.snapshot.procs, &mut self.collapsed),
             }
@@ -74,7 +87,12 @@ fn cpu_panel(ui: &mut Ui, state: &State) {
     panel::section(ui, "CPU", &cpu.name, cpu.temp, |ui| {
         panel::usage_bar(ui, cpu.usage / 100.0, format!("{:.0}%", cpu.usage));
         panel::core_bars(ui, &cpu.per_core);
-        panel::history_plot(ui, "cpu_history", &[("CPU %", &state.history.cpu, BLUE)], Some(100.0));
+        panel::history_plot(
+            ui,
+            "cpu_history",
+            &[("CPU %", &state.history.cpu, BLUE)],
+            Some(100.0),
+        );
     });
 }
 
@@ -86,7 +104,11 @@ fn mem_panel(ui: &mut Ui, state: &State) {
         panel::usage_bar(
             ui,
             fraction,
-            format!("{} / {}", fmt_bytes(mem.used as f64), fmt_bytes(mem.total as f64)),
+            format!(
+                "{} / {}",
+                fmt_bytes(mem.used as f64),
+                fmt_bytes(mem.total as f64)
+            ),
         );
         ui.horizontal_wrapped(|ui| {
             if mem.swap_total > 0 {
@@ -162,7 +184,12 @@ fn gpu_panel(ui: &mut Ui, state: &State) {
                 }
             });
             if let Some(history) = state.history.gpus.get(i) {
-                panel::history_plot(ui, &format!("gpu_history_{i}"), &[("GPU %", history, BLUE)], Some(100.0));
+                panel::history_plot(
+                    ui,
+                    &format!("gpu_history_{i}"),
+                    &[("GPU %", history, BLUE)],
+                    Some(100.0),
+                );
             }
         });
     }
@@ -170,7 +197,11 @@ fn gpu_panel(ui: &mut Ui, state: &State) {
 
 fn storage_panel(ui: &mut Ui, state: &State) {
     let storage = &state.snapshot.storage;
-    let hottest = storage.drives.iter().filter_map(|d| d.temp).reduce(f32::max);
+    let hottest = storage
+        .drives
+        .iter()
+        .filter_map(|d| d.temp)
+        .reduce(f32::max);
     panel::section(ui, "Storage", "", hottest, |ui| {
         for drive in &storage.drives {
             let title = RichText::new(&drive.name).strong();
@@ -230,7 +261,11 @@ fn net_panel(ui: &mut Ui, state: &State) {
         }
         ui.horizontal_wrapped(|ui| {
             for ping in &net.pings {
-                ui.weak(format!("Ping {} ({})", ping.label.to_lowercase(), ping.host));
+                ui.weak(format!(
+                    "Ping {} ({})",
+                    ping.label.to_lowercase(),
+                    ping.host
+                ));
                 match ping.ms {
                     Some(ms) => ui.label(panel::latency_text(ms)),
                     None => ui.label(RichText::new("timeout").color(panel::RED).strong()),

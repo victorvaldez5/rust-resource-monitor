@@ -196,15 +196,30 @@ impl History {
         push(&mut self.cpu, s.cpu.usage as f64);
         let pressure = s.mem.pressure;
         // Plotted as memory that is spoken for, so the graph rises as room runs out.
-        push(&mut self.mem_pressure, (100.0 - pressure.available_pct as f64, pressure.level));
+        push(
+            &mut self.mem_pressure,
+            (100.0 - pressure.available_pct as f64, pressure.level),
+        );
         self.gpus.resize_with(s.gpus.len(), VecDeque::new);
         for (h, g) in self.gpus.iter_mut().zip(&s.gpus) {
             push(h, g.util.unwrap_or(0.0) as f64);
         }
-        push(&mut self.disk_read, s.storage.drives.iter().map(|d| d.read_rate).sum());
-        push(&mut self.disk_write, s.storage.drives.iter().map(|d| d.write_rate).sum());
-        push(&mut self.net_down, s.net.ifaces.iter().map(|i| i.down_rate).sum());
-        push(&mut self.net_up, s.net.ifaces.iter().map(|i| i.up_rate).sum());
+        push(
+            &mut self.disk_read,
+            s.storage.drives.iter().map(|d| d.read_rate).sum(),
+        );
+        push(
+            &mut self.disk_write,
+            s.storage.drives.iter().map(|d| d.write_rate).sum(),
+        );
+        push(
+            &mut self.net_down,
+            s.net.ifaces.iter().map(|i| i.down_rate).sum(),
+        );
+        push(
+            &mut self.net_up,
+            s.net.ifaces.iter().map(|i| i.up_rate).sum(),
+        );
     }
 }
 

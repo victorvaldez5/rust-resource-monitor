@@ -54,7 +54,7 @@ impl Net {
         let ifaces = self.sample_ifaces(secs);
         self.since_socket_sample += secs;
 
-        if self.tick % SOCKET_SAMPLE_EVERY == 0 {
+        if self.tick.is_multiple_of(SOCKET_SAMPLE_EVERY) {
             self.sample_sockets(sys);
             self.since_socket_sample = 0.0;
         }
@@ -77,12 +77,19 @@ impl Net {
         dirs.sort();
         let mut out = Vec::new();
         for dir in dirs.iter().filter(|d| d.join("device").exists()) {
-            let name = dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let name = dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             let counter = |file: &str| temps::read_u64(dir.join("statistics").join(file));
             let (Some(rx), Some(tx)) = (counter("rx_bytes"), counter("tx_bytes")) else {
                 continue;
             };
-            let (prev_rx, prev_tx) = self.last_bytes.insert(name.clone(), (rx, tx)).unwrap_or((rx, tx));
+            let (prev_rx, prev_tx) = self
+                .last_bytes
+                .insert(name.clone(), (rx, tx))
+                .unwrap_or((rx, tx));
             out.push(NetIface {
                 up: temps::read_string(dir.join("operstate")).as_deref() == Some("up"),
                 temp: iface_temp(dir),
@@ -143,8 +150,11 @@ impl Net {
     fn resolve_owners(&mut self, sys: &System, active: &[(u64, u64, u64)]) {
         let live: HashSet<u64> = active.iter().map(|a| a.0).collect();
         self.owners.retain(|inode, _| live.contains(inode));
-        let wanted: HashSet<u64> =
-            live.iter().copied().filter(|i| !self.owners.contains_key(i)).collect();
+        let wanted: HashSet<u64> = live
+            .iter()
+            .copied()
+            .filter(|i| !self.owners.contains_key(i))
+            .collect();
         if wanted.is_empty() {
             return;
         }
@@ -158,9 +168,12 @@ impl Net {
                 let Ok(target) = fs::read_link(fd.path()) else {
                     continue;
                 };
-                let inode = target
-                    .to_str()
-                    .and_then(|t| t.strip_prefix("socket:[")?.strip_suffix(']')?.parse::<u64>().ok());
+                let inode = target.to_str().and_then(|t| {
+                    t.strip_prefix("socket:[")?
+                        .strip_suffix(']')?
+                        .parse::<u64>()
+                        .ok()
+                });
                 if let Some(inode) = inode.filter(|i| wanted.contains(i)) {
                     self.owners.entry(inode).or_insert(Some(pid.as_u32()));
                 }
@@ -192,7 +205,11 @@ fn parse_socket(line: &str) -> Option<(String, u64, Conn)> {
         }
     }
     let inode = inode?;
-    Some((format!("{local}>{peer}#{inode}"), inode, Conn { sent, received }))
+    Some((
+        format!("{local}>{peer}#{inode}"),
+        inode,
+        Conn { sent, received },
+    ))
 }
 
 /// Wi-Fi cards hang their sensor off the radio, wired ones off the PHY.
