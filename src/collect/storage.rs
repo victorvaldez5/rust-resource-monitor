@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use sysinfo::{Disks, System};
+use sysinfo::Disks;
 
-use super::{procs, temps};
+use super::temps;
 use crate::snapshot::{Drive, Filesystem, StorageInfo};
 
 /// /sys/block/*/stat counts in 512-byte sectors regardless of the device's block size.
@@ -47,7 +47,7 @@ impl Storage {
     }
 
     /// `secs` is the time since the previous sample.
-    pub fn sample(&mut self, sys: &System, secs: f64) -> StorageInfo {
+    pub fn sample(&mut self, secs: f64) -> StorageInfo {
         let drives = self
             .drives
             .iter()
@@ -69,14 +69,6 @@ impl Storage {
         StorageInfo {
             drives,
             filesystems: self.filesystems(),
-            top: procs::top(
-                sys.processes().values().map(|p| {
-                    let io = p.disk_usage();
-                    let per_sec = |bytes: u64| bytes as f64 / secs;
-                    (procs::display_name(p), [per_sec(io.read_bytes), per_sec(io.written_bytes)])
-                }),
-                |v| v[0] + v[1],
-            ),
         }
     }
 

@@ -49,7 +49,7 @@ impl AmdGpu {
             temp: self.hwmon.as_deref().and_then(temps::first_temp),
             power_w: None,
             fan_pct: None,
-            top: None,
+            procs: Default::default(),
         }
     }
 }

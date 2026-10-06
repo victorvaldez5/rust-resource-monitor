@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use sysinfo::System;
 
-use super::{procs, temps};
+use super::temps;
 use crate::snapshot::{MemInfo, MemPressure, PressureLevel};
 
 // Pressure is warning or critical once tasks stall for more than this percent
@@ -30,12 +30,6 @@ impl Mem {
             swap_used: sys.used_swap(),
             pressure: pressure(sys),
             dimm_temps: self.dimms.iter().filter_map(|d| temps::first_temp(d)).collect(),
-            top: procs::top(
-                sys.processes()
-                    .values()
-                    .map(|p| (procs::display_name(p), [p.memory() as f64, 0.0])),
-                |v| v[0],
-            ),
         }
     }
 }

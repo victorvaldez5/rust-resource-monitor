@@ -2,11 +2,7 @@ use std::collections::HashMap;
 
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
-use nvml_wrapper::enums::device::UsedGpuMemory;
-use sysinfo::System;
-
-use super::procs;
-use crate::snapshot::GpuInfo;
+use nvml_wrapper::enums::device::UsedGpuMemory;use crate::snapshot::GpuInfo;
 
 /// How far back to ask NVML for per-process utilization samples, in microseconds.
 /// Wider than the 1s refresh so a process doesn't flicker to 0% between samples.
@@ -26,11 +22,11 @@ impl Nvidia {
         Some(Self { nvml, newest_sample: vec![0; count] })
     }
 
-    pub fn sample(&mut self, sys: &System) -> Vec<GpuInfo> {
-        (0..self.newest_sample.len()).filter_map(|i| self.sample_device(i, sys)).collect()
+    pub fn sample(&mut self) -> Vec<GpuInfo> {
+        (0..self.newest_sample.len()).filter_map(|i| self.sample_device(i)).collect()
     }
 
-    fn sample_device(&mut self, index: usize, sys: &System) -> Option<GpuInfo> {
+    fn sample_device(&mut self, index: usize) -> Option<GpuInfo> {
         let dev = self.nvml.device_by_index(index as u32).ok()?;
         let mem = dev.memory_info().ok();
 
@@ -58,10 +54,10 @@ impl Nvidia {
             }
         }
 
-        let rows = vram.iter().map(|(pid, bytes)| {
-            let pct = util.get(pid).map_or(0, |u| u.1);
-            (procs::name_of_pid(sys, *pid), [*bytes as f64, pct as f64])
-        });
+        let procs = vram
+            .iter()
+            .map(|(pid, bytes)| (*pid, [*bytes as f64, util.get(pid).map_or(0, |u| u.1) as f64]))
+            .collect();
 
         Some(GpuInfo {
             name: dev.name().unwrap_or_else(|_| format!("NVIDIA GPU {index}")),
@@ -71,7 +67,7 @@ impl Nvidia {
             temp: dev.temperature(TemperatureSensor::Gpu).ok().map(|t| t as f32),
             power_w: dev.power_usage().ok().map(|mw| mw as f32 / 1000.0),
             fan_pct: dev.fan_speed(0).ok(),
-            top: Some(procs::top(rows, |v| v[0] + v[1])),
+            procs,
         })
     }
 }

@@ -90,14 +90,6 @@ pub fn section(ui: &mut Ui, title: &str, subtitle: &str, temp: Option<f32>, body
     ui.add_space(6.0);
 }
 
-/// A titled block inside the processes pane.
-pub fn subsection(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
-    ui.separator();
-    body(ui);
-    ui.add_space(12.0);
-}
-
 /// Title row: name on the left, weak subtitle next to it, temperature right-aligned.
 pub fn header(ui: &mut Ui, title: RichText, subtitle: &str, temp: Option<f32>) {
     ui.horizontal(|ui| {
@@ -180,46 +172,6 @@ fn history_axes(id: &str, y_max: Option<f64>) -> Plot<'_> {
         plot = plot.include_y(max);
     }
     plot
-}
-
-/// The "used by what" table. The first column is the process name.
-pub fn top_table(ui: &mut Ui, id: &str, headers: &[&str], rows: &[Vec<String>]) {
-    if rows.is_empty() {
-        ui.weak("Nothing using this right now");
-        return;
-    }
-    ui.push_id(id, |ui| {
-        table_row(ui, headers.iter().map(|h| RichText::new(*h).weak()).collect());
-        for row in rows {
-            let cells = row.iter().enumerate().map(|(i, cell)| {
-                if i == 0 { RichText::new(cell) } else { RichText::new(cell).monospace() }
-            });
-            table_row(ui, cells.collect());
-        }
-    });
-}
-
-/// Value columns are fixed-width and right-aligned; the name takes the rest.
-fn table_row(ui: &mut Ui, mut cells: Vec<RichText>) {
-    const VALUE_WIDTH: f32 = 84.0;
-    let values = cells.split_off(1);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            for value in values.into_iter().rev() {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(VALUE_WIDTH, ui.spacing().interact_size.y),
-                    Layout::right_to_left(Align::Center),
-                    |ui| {
-                        ui.set_min_width(VALUE_WIDTH);
-                        ui.label(value);
-                    },
-                );
-            }
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.add(egui::Label::new(cells.remove(0)).truncate());
-            });
-        });
-    });
 }
 
 /// One thin vertical bar per CPU core.

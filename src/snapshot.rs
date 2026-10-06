@@ -1,15 +1,24 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 /// Number of samples kept for the history graphs (one per second).
 pub const HISTORY_LEN: usize = 60;
 
-/// A group of same-named processes and what they consume.
-/// The meaning of `values` depends on the panel that owns the list.
-#[derive(Clone, Debug, Default)]
-pub struct TopProc {
-    pub name: String,
-    pub count: usize,
-    pub values: [f64; 2],
+/// What one process is using right now. Rates are per second.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProcUsage {
+    /// Percent of all cores, 0-100.
+    pub cpu: f32,
+    /// Resident bytes.
+    pub mem: u64,
+    /// GPU percent, summed over GPUs.
+    pub gpu: f32,
+    pub vram: u64,
+    pub disk_read: f64,
+    pub disk_write: f64,
+    /// TCP only.
+    pub net_down: f64,
+    pub net_up: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -19,8 +28,6 @@ pub struct CpuInfo {
     pub usage: f32,
     pub per_core: Vec<f32>,
     pub temp: Option<f32>,
-    /// values[0] = percent of all cores.
-    pub top: Vec<TopProc>,
 }
 
 /// How badly a shortage of memory is holding programs up.
@@ -50,8 +57,6 @@ pub struct MemInfo {
     pub swap_used: u64,
     pub pressure: MemPressure,
     pub dimm_temps: Vec<f32>,
-    /// values[0] = resident bytes.
-    pub top: Vec<TopProc>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -63,8 +68,8 @@ pub struct GpuInfo {
     pub temp: Option<f32>,
     pub power_w: Option<f32>,
     pub fan_pct: Option<u32>,
-    /// values[0] = VRAM bytes, values[1] = GPU percent. None if the driver can't tell us.
-    pub top: Option<Vec<TopProc>>,
+    /// pid -> (VRAM bytes, GPU percent). Empty if the driver can't tell us.
+    pub procs: HashMap<u32, [f64; 2]>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -90,8 +95,6 @@ pub struct Filesystem {
 pub struct StorageInfo {
     pub drives: Vec<Drive>,
     pub filesystems: Vec<Filesystem>,
-    /// values[0] = read bytes/s, values[1] = written bytes/s.
-    pub top: Vec<TopProc>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -116,8 +119,52 @@ pub struct PingTarget {
 pub struct NetInfo {
     pub ifaces: Vec<NetIface>,
     pub pings: Vec<PingTarget>,
-    /// values[0] = download bytes/s, values[1] = upload bytes/s. TCP only.
-    pub top: Vec<TopProc>,
+}
+
+/// One running process, for the process tree.
+#[derive(Clone, Debug, Default)]
+pub struct ProcInfo {
+    pub pid: u32,
+    pub parent: Option<u32>,
+    pub name: String,
+    pub user: String,
+    /// What the process belongs to, such as "Kernel", "KDE" or "Zen".
+    pub group: String,
+    /// The systemd unit it runs in, or "" if none.
+    pub unit: String,
+    pub cmd: String,
+    pub usage: ProcUsage,
+    /// Seconds since the Unix epoch.
+    pub start_time: u64,
+}
+
+/// A process seen since the monitor started, running or not.
+#[derive(Clone, Debug, Default)]
+pub struct ProcRecord {
+    pub pid: u32,
+    pub name: String,
+    pub user: String,
+    /// What the process belongs to, such as "Kernel", "KDE" or "Zen".
+    pub group: String,
+    /// Seconds since the Unix epoch.
+    pub start_time: u64,
+    /// Seconds since the Unix epoch of the last sample it appeared in.
+    pub last_seen: u64,
+    /// Seconds since the Unix epoch of the last sample in which it used CPU.
+    pub last_active: Option<u64>,
+    pub samples: u64,
+    /// Sum of its CPU percent (of all cores) over every sample.
+    pub cpu_sum: f64,
+    /// Zero once it has exited.
+    pub usage: ProcUsage,
+    pub running: bool,
+}
+
+impl ProcRecord {
+    /// Average percent of all cores while the monitor watched it.
+    pub fn avg_cpu(&self) -> f64 {
+        self.cpu_sum / self.samples.max(1) as f64
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -127,6 +174,10 @@ pub struct Snapshot {
     pub gpus: Vec<GpuInfo>,
     pub storage: StorageInfo,
     pub net: NetInfo,
+    /// Every process, ordered by pid. Shared because the UI copies the snapshot each frame.
+    pub procs: Arc<Vec<ProcInfo>>,
+    /// Every process seen since start, including exited ones, in no particular order.
+    pub proc_log: Arc<Vec<ProcRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]

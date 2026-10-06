@@ -8,7 +8,7 @@ eframe = { version = "0.36.2", default-features = false, features = ["glow", "wa
 egui_plot = "0.37.0"
 nvml-wrapper = "0.13.0"
 socket2 = "0.6.5"
-sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk", "user"] }
 
 [profile.release]
 lto = "thin"

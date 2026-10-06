@@ -6,17 +6,12 @@ use std::process::Command;
 use sysinfo::System;
 
 use super::ping::Pinger;
-use super::{procs, temps};
-use crate::snapshot::{NetIface, NetInfo, TopProc};
+use super::temps;
+use crate::snapshot::{NetIface, NetInfo};
 
 /// Listing sockets costs far more than everything else we sample, so the
 /// per-app table refreshes on every Nth sample instead of every one.
 const SOCKET_SAMPLE_EVERY: u32 = 2;
-/// Row for traffic we measured on the interface but couldn't pin on a process.
-const UNATTRIBUTED: &str = "Not attributed (UDP/QUIC, system)";
-/// Below this many bytes/s the unattributed remainder is just packet headers.
-const UNATTRIBUTED_MIN: f64 = 8.0 * 1024.0;
-
 /// Byte counters of one TCP connection at the previous socket sample.
 struct Conn {
     sent: u64,
@@ -33,9 +28,8 @@ pub struct Net {
     primed: bool,
     tick: u32,
     since_socket_sample: f64,
-    /// Interface (down, up) bytes accumulated since the last socket sample.
-    iface_bytes: (f64, f64),
-    top: Vec<TopProc>,
+    /// pid -> (download, upload) bytes/s as of the last socket sample.
+    per_pid: HashMap<u32, [f64; 2]>,
     pinger: Pinger,
 }
 
@@ -48,8 +42,7 @@ impl Net {
             primed: false,
             tick: 0,
             since_socket_sample: 0.0,
-            iface_bytes: (0.0, 0.0),
-            top: Vec::new(),
+            per_pid: HashMap::new(),
             pinger: Pinger::start(),
         };
         this.sample_ifaces(1.0);
@@ -59,22 +52,23 @@ impl Net {
     /// `secs` is the time since the previous sample.
     pub fn sample(&mut self, sys: &System, secs: f64) -> NetInfo {
         let ifaces = self.sample_ifaces(secs);
-        self.iface_bytes.0 += ifaces.iter().map(|i| i.down_rate).sum::<f64>() * secs;
-        self.iface_bytes.1 += ifaces.iter().map(|i| i.up_rate).sum::<f64>() * secs;
         self.since_socket_sample += secs;
 
         if self.tick % SOCKET_SAMPLE_EVERY == 0 {
             self.sample_sockets(sys);
             self.since_socket_sample = 0.0;
-            self.iface_bytes = (0.0, 0.0);
         }
         self.tick = self.tick.wrapping_add(1);
 
         NetInfo {
             ifaces: ifaces.into_iter().filter(|i| i.up).collect(),
             pings: self.pinger.latest(),
-            top: self.top.clone(),
         }
+    }
+
+    /// pid -> (download, upload) bytes/s over TCP, for processes we can see.
+    pub fn per_pid(&self) -> &HashMap<u32, [f64; 2]> {
+        &self.per_pid
     }
 
     /// Physical interfaces only: tunnels like VPNs would count the same bytes twice.
@@ -100,7 +94,7 @@ impl Net {
         out
     }
 
-    /// Rebuilds `self.top` from the change in every TCP connection's byte counters.
+    /// Rebuilds `self.per_pid` from the change in every TCP connection's byte counters.
     fn sample_sockets(&mut self, sys: &System) {
         // -t TCP, -i byte counters, -n numeric, -e socket inode, -H no header, -O one line each.
         let Ok(output) = Command::new("ss").arg("-tineHO").output() else {
@@ -133,31 +127,16 @@ impl Net {
 
         self.resolve_owners(sys, &active);
         let secs = self.since_socket_sample.max(0.001);
-        let mut attributed = (0.0, 0.0);
-        let mut rows: Vec<(String, [f64; 2])> = Vec::new();
+        let mut per_pid: HashMap<u32, [f64; 2]> = HashMap::new();
         for (inode, received, sent) in &active {
-            let name = match self.owners.get(inode) {
-                Some(Some(pid)) => procs::name_of_pid(sys, *pid),
-                _ => continue,
+            let Some(Some(pid)) = self.owners.get(inode) else {
+                continue;
             };
-            attributed.0 += *received as f64;
-            attributed.1 += *sent as f64;
-            rows.push((name, [*received as f64 / secs, *sent as f64 / secs]));
+            let rates = per_pid.entry(*pid).or_default();
+            rates[0] += *received as f64 / secs;
+            rates[1] += *sent as f64 / secs;
         }
-        let rest = [
-            (self.iface_bytes.0 - attributed.0).max(0.0) / secs,
-            (self.iface_bytes.1 - attributed.1).max(0.0) / secs,
-        ];
-        if rest[0] + rest[1] >= UNATTRIBUTED_MIN {
-            rows.push((UNATTRIBUTED.to_string(), rest));
-        }
-        self.top = procs::top(rows.into_iter(), |v| v[0] + v[1]);
-        // Several processes can share a name, but the remainder is a single row.
-        for row in &mut self.top {
-            if row.name == UNATTRIBUTED {
-                row.count = 1;
-            }
-        }
+        self.per_pid = per_pid;
     }
 
     /// Fills `self.owners` for any active socket we haven't matched to a process yet.

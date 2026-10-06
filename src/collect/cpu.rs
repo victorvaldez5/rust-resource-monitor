@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use sysinfo::System;
 
-use super::{procs, temps};
+use super::temps;
 use crate::snapshot::CpuInfo;
 
 pub struct Cpu {
@@ -22,7 +22,6 @@ impl Cpu {
     }
 
     pub fn sample(&self, sys: &System) -> CpuInfo {
-        let cores = sys.cpus().len().max(1) as f64;
         let temp = self.sensor.as_ref().and_then(|(dir, label)| {
             temps::temp_by_label(dir, label).or_else(|| temps::first_temp(dir))
         });
@@ -31,14 +30,6 @@ impl Cpu {
             usage: sys.global_cpu_usage(),
             per_core: sys.cpus().iter().map(|c| c.cpu_usage()).collect(),
             temp,
-            // sysinfo reports per-process usage as percent of one core; scale it
-            // so the table adds up to the total shown in the bar.
-            top: procs::top(
-                sys.processes()
-                    .values()
-                    .map(|p| (procs::display_name(p), [p.cpu_usage() as f64 / cores, 0.0])),
-                |v| (v[0] * 10.0).round(),
-            ),
         }
     }
 }

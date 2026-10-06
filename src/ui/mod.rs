@@ -1,19 +1,39 @@
+mod history;
 mod panel;
+pub mod tree;
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, RichText, Ui};
 
-use crate::snapshot::{State, TopProc};
+use crate::snapshot::State;
 use panel::{BLUE, ORANGE, fmt_bytes, fmt_rate};
+
+/// What the main area shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum View {
+    Hardware,
+    History,
+    Tree,
+}
 
 pub struct App {
     shared: Arc<Mutex<State>>,
+    view: View,
+    /// Pids whose children are hidden in the process tree.
+    collapsed: HashSet<u32>,
+    history_sort: history::Sort,
+    /// Process names opened up in the history to show each pid.
+    history_open: HashSet<String>,
 }
 
 impl App {
     pub fn new(shared: Arc<Mutex<State>>) -> Self {
-        Self { shared }
+        /// kthreadd, the parent of every kernel thread. There are hundreds
+        /// of them, so they start out folded away.
+        const KTHREADD: u32 = 2;
+        Self { shared, view: View::Hardware, collapsed: HashSet::from([KTHREADD]), history_sort: Default::default(), history_open: HashSet::new() }
     }
 }
 
@@ -21,25 +41,30 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         // Copy the state out so the sampler is never blocked while we draw.
         let state = self.shared.lock().unwrap().clone();
-        // Side panels must be added before the central panel, which takes what's left.
-        egui::Panel::right("processes").resizable(true).default_size(340.0).min_size(240.0).show(
-            ui,
-            |ui| {
-                egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                    processes_pane(ui, &state);
-                });
-            },
-        );
         egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                ui.columns(2, |cols| {
-                    cpu_panel(&mut cols[0], &state);
-                    mem_panel(&mut cols[0], &state);
-                    net_panel(&mut cols[0], &state);
-                    gpu_panel(&mut cols[1], &state);
-                    storage_panel(&mut cols[1], &state);
-                });
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.view, View::Hardware, "Hardware");
+                ui.selectable_value(&mut self.view, View::History, "Process history");
+                ui.selectable_value(&mut self.view, View::Tree, "Process tree");
             });
+            ui.separator();
+            match self.view {
+                View::Hardware => {
+                    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                        ui.columns(2, |cols| {
+                            cpu_panel(&mut cols[0], &state);
+                            mem_panel(&mut cols[0], &state);
+                            net_panel(&mut cols[0], &state);
+                            gpu_panel(&mut cols[1], &state);
+                            storage_panel(&mut cols[1], &state);
+                        });
+                    });
+                }
+                View::History => {
+                    history::show(ui, &state.snapshot.proc_log, &mut self.history_sort, &mut self.history_open);
+                }
+                View::Tree => tree::show(ui, &state.snapshot.procs, &mut self.collapsed),
+            }
         });
     }
 }
@@ -228,61 +253,4 @@ fn net_panel(ui: &mut Ui, state: &State) {
             Some(128.0 * 1024.0),
         );
     });
-}
-
-/// The "used by what" tables for every resource, kept apart from the hardware panels.
-fn processes_pane(ui: &mut Ui, state: &State) {
-    let snap = &state.snapshot;
-    ui.add_space(4.0);
-    ui.heading("Processes");
-    ui.add_space(4.0);
-
-    panel::subsection(ui, "CPU", |ui| {
-        let rows = rows(&snap.cpu.top, |v| vec![format!("{:.1}%", v[0])]);
-        panel::top_table(ui, "cpu_top", &["Process", "CPU"], &rows);
-    });
-    panel::subsection(ui, "RAM", |ui| {
-        let rows = rows(&snap.mem.top, |v| vec![fmt_bytes(v[0])]);
-        panel::top_table(ui, "mem_top", &["Process", "Memory"], &rows);
-    });
-    for (i, gpu) in snap.gpus.iter().enumerate() {
-        // GPUs whose driver can't report per-process usage have no table to show.
-        let Some(top) = &gpu.top else { continue };
-        panel::subsection(ui, &format!("GPU · {}", gpu.name), |ui| {
-            let rows = rows(top, |v| vec![fmt_bytes(v[0]), format!("{:.0}%", v[1])]);
-            panel::top_table(ui, &format!("gpu_top_{i}"), &["Process", "VRAM", "GPU"], &rows);
-        });
-    }
-    panel::subsection(ui, "Storage", |ui| {
-        let rows = rows(&snap.storage.top, |v| vec![fmt_rate(v[0]), fmt_rate(v[1])]);
-        panel::top_table(ui, "disk_top", &["Process", "Read", "Write"], &rows);
-        ui.label(RichText::new("Only your own processes, unless run as root.").weak().small())
-            .on_hover_text("Linux hides other users' I/O counters (/proc/<pid>/io).");
-    });
-    panel::subsection(ui, "Network", |ui| {
-        let rows = rows(&snap.net.top, |v| vec![fmt_rate(v[0]), fmt_rate(v[1])]);
-        panel::top_table(ui, "net_top", &["Process", "Down", "Up"], &rows);
-        ui.label(RichText::new("TCP connections of your own processes.").weak().small())
-            .on_hover_text(
-                "Linux has no per-process network counters. These come from each TCP \
-                 connection's byte counts, so UDP and QUIC (HTTP/3) traffic and other \
-                 users' processes show up only in the unattributed row.",
-            );
-    });
-}
-
-/// Table rows: process name (with a count when several share it) plus formatted values.
-fn rows(top: &[TopProc], format: impl Fn(&[f64; 2]) -> Vec<String>) -> Vec<Vec<String>> {
-    top.iter()
-        .map(|p| {
-            let name = if p.count > 1 {
-                format!("{} ×{}", p.name, p.count)
-            } else {
-                p.name.clone()
-            };
-            let mut row = vec![name];
-            row.extend(format(&p.values));
-            row
-        })
-        .collect()
 }

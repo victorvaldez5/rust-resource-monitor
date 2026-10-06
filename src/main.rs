@@ -10,8 +10,10 @@ use eframe::egui;
 use snapshot::State;
 
 fn main() -> eframe::Result {
-    // `--dump` prints one sample as text and exits, for checking sensors without the window.
-    if std::env::args().any(|a| a == "--dump") {
+    // `--dump` prints one sample as text and exits, for checking sensors without
+    // the window; `--dump-tree` prints the process tree the same way.
+    let dump_tree = std::env::args().any(|a| a == "--dump-tree");
+    if dump_tree || std::env::args().any(|a| a == "--dump") {
         // Rates are differences between samples, and the per-app network table
         // only fills in on its second pass, so take a few before printing.
         const WARM_UP_SAMPLES: usize = 2;
@@ -21,7 +23,17 @@ fn main() -> eframe::Result {
             collector.sample();
         }
         std::thread::sleep(sampler::INTERVAL);
-        println!("{:#?}", collector.sample());
+        let mut snapshot = collector.sample();
+        let procs = std::mem::take(&mut snapshot.procs);
+        if dump_tree {
+            for row in ui::tree::rows(&procs, &Default::default()) {
+                let p = &procs[row.index];
+                let indent = "  ".repeat(row.depth);
+                println!("{:>7} {:<12} {:<16} {indent}{}", p.pid, p.user, p.group, p.name);
+            }
+        } else {
+            println!("{snapshot:#?}");
+        }
         return Ok(());
     }
 
@@ -30,7 +42,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Resource Monitor")
             .with_app_id("rust-resource-monitor")
-            .with_inner_size([1320.0, 860.0])
+            .with_inner_size([1420.0, 860.0])
             .with_min_inner_size([640.0, 400.0]),
         ..Default::default()
     };
