@@ -1,0 +1,15 @@
+[package]
+name = "rust-resource-monitor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
+egui_plot = "0.37.0"
+nvml-wrapper = "0.13.0"
+socket2 = "0.6.5"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
+
+[profile.release]
+lto = "thin"
+strip = true
