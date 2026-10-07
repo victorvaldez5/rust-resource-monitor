@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Align, Layout, RichText, Sense, Ui};
 
-use super::panel::fmt_bytes;
-use crate::snapshot::ProcInfo;
+use super::panel::{explanation, fmt_bytes};
+use crate::explain::group_key;
+use crate::snapshot::{ProcInfo, ProcUsage};
 
 const INDENT: f32 = 16.0;
 /// Widths of the fixed columns to the right of the name.
@@ -15,18 +16,85 @@ const USER_WIDTH: f32 = 96.0;
 const GROUP_WIDTH: f32 = 120.0;
 const CPU_WIDTH: f32 = 60.0;
 const MEM_WIDTH: f32 = 84.0;
+/// The name column never gets narrower than this; the list scrolls sideways instead.
+const NAME_MIN_WIDTH: f32 = 220.0;
+
+/// What the user has folded, opened and picked in the tree.
+#[derive(Default)]
+pub struct TreeState {
+    /// Pids whose children are hidden.
+    collapsed: HashSet<u32>,
+    /// Per-core groups that are open, as (parent pid, group name). Groups start closed.
+    open_groups: HashSet<(u32, String)>,
+    /// The process shown in the details pane.
+    selected: Option<u32>,
+}
+
+impl TreeState {
+    /// `collapsed` are the pids that start out folded away.
+    pub fn new(collapsed: impl IntoIterator<Item = u32>) -> Self {
+        Self {
+            collapsed: collapsed.into_iter().collect(),
+            open_groups: HashSet::new(),
+            selected: None,
+        }
+    }
+}
+
+/// Several siblings that are copies of one thing, such as `ksoftirqd/0`, `ksoftirqd/1`, ...
+pub struct Group {
+    pub name: String,
+    pub members: Vec<usize>,
+    open: bool,
+}
 
 /// One visible line of the tree.
 pub struct Row {
-    /// Index into the process list.
+    /// Index into the process list; for a group, its first member.
     pub index: usize,
     pub depth: usize,
     pub children: usize,
+    /// Set when the line stands for several processes.
+    pub group: Option<Group>,
+}
+
+enum Entry {
+    One(usize),
+    Group(String, Vec<usize>),
+}
+
+/// Folds siblings that share a name before the first '/' into one entry each,
+/// at the place the first of them appeared. A lone one stays a plain process.
+fn entries(procs: &[ProcInfo], siblings: &[usize]) -> Vec<Entry> {
+    let mut out: Vec<Entry> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    for &i in siblings {
+        let name = procs[i].name.as_str();
+        let key = group_key(name);
+        if key == name {
+            out.push(Entry::One(i));
+        } else if let Some(&slot) = at.get(key) {
+            if let Entry::Group(_, members) = &mut out[slot] {
+                members.push(i);
+            }
+        } else {
+            at.insert(key, out.len());
+            out.push(Entry::Group(key.to_string(), vec![i]));
+        }
+    }
+    for e in &mut out {
+        if let Entry::Group(_, members) = e
+            && members.len() == 1
+        {
+            *e = Entry::One(members[0]);
+        }
+    }
+    out
 }
 
 /// Flattens the tree into the lines to draw, skipping what's under a collapsed process.
 /// `procs` must be ordered by pid; siblings come out in the same order.
-pub fn rows(procs: &[ProcInfo], collapsed: &HashSet<u32>) -> Vec<Row> {
+pub fn rows(procs: &[ProcInfo], state: &TreeState) -> Vec<Row> {
     let pids: HashSet<u32> = procs.iter().map(|p| p.pid).collect();
     let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
     let mut roots = Vec::new();
@@ -40,85 +108,230 @@ pub fn rows(procs: &[ProcInfo], collapsed: &HashSet<u32>) -> Vec<Row> {
         }
     }
 
+    // (what to draw, depth, pid of the parent)
     let mut out = Vec::new();
-    let mut stack: Vec<(usize, usize)> = roots.into_iter().rev().map(|i| (i, 0)).collect();
-    while let Some((index, depth)) = stack.pop() {
-        let kids = children
-            .get(&procs[index].pid)
-            .map_or(&[][..], Vec::as_slice);
-        out.push(Row {
-            index,
-            depth,
-            children: kids.len(),
-        });
-        if !collapsed.contains(&procs[index].pid) {
-            stack.extend(kids.iter().rev().map(|kid| (*kid, depth + 1)));
+    let mut stack: Vec<(Entry, usize, u32)> = entries(procs, &roots)
+        .into_iter()
+        .rev()
+        .map(|e| (e, 0, 0))
+        .collect();
+    while let Some((entry, depth, parent)) = stack.pop() {
+        match entry {
+            Entry::One(index) => {
+                let kids = children
+                    .get(&procs[index].pid)
+                    .map_or(&[][..], Vec::as_slice);
+                out.push(Row {
+                    index,
+                    depth,
+                    children: kids.len(),
+                    group: None,
+                });
+                if !state.collapsed.contains(&procs[index].pid) {
+                    let pid = procs[index].pid;
+                    let kids = entries(procs, kids);
+                    stack.extend(kids.into_iter().rev().map(|e| (e, depth + 1, pid)));
+                }
+            }
+            Entry::Group(name, members) => {
+                let open = state.open_groups.contains(&(parent, name.clone()));
+                out.push(Row {
+                    index: members[0],
+                    depth,
+                    children: members.len(),
+                    group: Some(Group {
+                        name,
+                        members: members.clone(),
+                        open,
+                    }),
+                });
+                if open {
+                    stack.extend(
+                        members
+                            .into_iter()
+                            .rev()
+                            .map(|i| (Entry::One(i), depth + 1, parent)),
+                    );
+                }
+            }
         }
     }
     out
 }
 
-pub fn show(ui: &mut Ui, procs: &[ProcInfo], collapsed: &mut HashSet<u32>) {
-    ui.horizontal(|ui| {
-        ui.weak(format!("{} processes", procs.len()));
-        if ui.small_button("Expand all").clicked() {
-            collapsed.clear();
+/// A group's line shows the sum of its members.
+fn group_usage(procs: &[ProcInfo], members: &[usize]) -> (ProcUsage, String, String) {
+    let first = &procs[members[0]];
+    let mut usage = ProcUsage::default();
+    let (mut user, mut group) = (first.user.clone(), first.group.clone());
+    for &i in members {
+        usage.cpu += procs[i].usage.cpu;
+        usage.mem += procs[i].usage.mem;
+        if procs[i].user != user {
+            user = "various".to_string();
         }
-        if ui.small_button("Collapse all").clicked() {
-            collapsed.extend(procs.iter().map(|p| p.pid));
+        if procs[i].group != group {
+            group = "various".to_string();
         }
-    });
-    let header = ["PID", "User", "Belongs to", "CPU", "Memory"].map(|h| RichText::new(h).weak());
-    line(ui, header, |ui| {
-        ui.weak("Process");
-    });
-    ui.separator();
+    }
+    (usage, user, group)
+}
 
-    let rows = rows(procs, collapsed);
+pub fn show(ui: &mut Ui, procs: &[ProcInfo], state: &mut TreeState) {
     let by_pid: HashMap<u32, &ProcInfo> = procs.iter().map(|p| (p.pid, p)).collect();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let height = ui.spacing().interact_size.y;
-    // Only the lines scrolled into view are laid out.
-    egui::ScrollArea::vertical().auto_shrink(false).show_rows(
-        ui,
-        height,
-        rows.len(),
-        |ui, range| {
-            for row in &rows[range] {
-                let p = &procs[row.index];
-                let cells = [
-                    RichText::new(p.pid.to_string()).monospace(),
-                    RichText::new(&p.user),
-                    RichText::new(&p.group),
-                    RichText::new(format!("{:.1}%", p.usage.cpu)).monospace(),
-                    RichText::new(fmt_bytes(p.usage.mem as f64)).monospace(),
-                ];
-                line(ui, cells, |ui| {
-                    ui.add_space(row.depth as f32 * INDENT);
-                    let arrow = match (row.children, collapsed.contains(&p.pid)) {
-                        (0, _) => "    ",
-                        (_, true) => "⏵ ",
-                        (_, false) => "⏷ ",
-                    };
-                    let label = egui::Label::new(format!("{arrow}{}", p.name))
-                        .truncate()
-                        .sense(Sense::click());
-                    let response = ui.add(label).on_hover_ui(|ui| details(ui, p, &by_pid, now));
-                    if response.clicked() && row.children > 0 && !collapsed.remove(&p.pid) {
-                        collapsed.insert(p.pid);
+    if let Some(pid) = state.selected {
+        // Docked before the list so the list gets what is left.
+        egui::Panel::right("process_pane")
+            .default_size(380.0)
+            .size_range(260.0..=700.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.weak("Process details");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("✕").clicked() {
+                            state.selected = None;
+                        }
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| match by_pid.get(&pid) {
+                    Some(p) => details(ui, p, &by_pid, now),
+                    None => {
+                        ui.label(format!("Process {pid} has exited."));
                     }
                 });
+            });
+    }
+    ui.horizontal(|ui| {
+        ui.weak(format!("{} processes", procs.len()));
+        if ui.small_button("Expand all").clicked() {
+            state.collapsed.clear();
+        }
+        if ui.small_button("Collapse all").clicked() {
+            state.collapsed.extend(procs.iter().map(|p| p.pid));
+        }
+    });
+
+    let rows = rows(procs, state);
+    let height = ui.spacing().interact_size.y;
+    // Narrow windows, or an open pane, scroll sideways rather than cutting columns off.
+    let fixed = PID_WIDTH + USER_WIDTH + GROUP_WIDTH + CPU_WIDTH + MEM_WIDTH;
+    let min_width = fixed + NAME_MIN_WIDTH + ui.spacing().item_spacing.x * 6.0;
+    let width = ui.available_width().max(min_width);
+    egui::ScrollArea::horizontal().show(ui, |ui| {
+        ui.set_width(width);
+        let header =
+            ["PID", "User", "Belongs to", "CPU", "Memory"].map(|h| RichText::new(h).weak());
+        line(ui, header, |ui| {
+            ui.weak("Process");
+        });
+        ui.separator();
+        // Only the lines scrolled into view are laid out.
+        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+            ui,
+            height,
+            rows.len(),
+            |ui, range| {
+                for row in &rows[range] {
+                    match &row.group {
+                        Some(group) => group_row(ui, procs, row, group, state),
+                        None => process_row(ui, procs, row, state, &by_pid, now),
+                    }
+                }
+            },
+        );
+    });
+}
+
+fn process_row(
+    ui: &mut Ui,
+    procs: &[ProcInfo],
+    row: &Row,
+    state: &mut TreeState,
+    by_pid: &HashMap<u32, &ProcInfo>,
+    now: u64,
+) {
+    let p = &procs[row.index];
+    let cells = [
+        RichText::new(p.pid.to_string()).monospace(),
+        RichText::new(&p.user),
+        RichText::new(&p.group),
+        RichText::new(format!("{:.1}%", p.usage.cpu)).monospace(),
+        RichText::new(fmt_bytes(p.usage.mem as f64)).monospace(),
+    ];
+    let area = line(ui, cells, |ui| {
+        ui.add_space(row.depth as f32 * INDENT);
+        let arrow = match (row.children, state.collapsed.contains(&p.pid)) {
+            (0, _) => "    ",
+            (_, true) => "⏵ ",
+            (_, false) => "⏷ ",
+        };
+        // The arrow folds the children; the name selects the process.
+        let arrow = ui.add(egui::Label::new(arrow).sense(Sense::click()));
+        if arrow.clicked() && row.children > 0 && !state.collapsed.remove(&p.pid) {
+            state.collapsed.insert(p.pid);
+        }
+        let name = RichText::new(&p.name);
+        let name = if state.selected == Some(p.pid) {
+            name.strong().underline()
+        } else {
+            name
+        };
+        let label = egui::Label::new(name).truncate().sense(Sense::click());
+        let response = ui.add(label).on_hover_ui(|ui| details(ui, p, by_pid, now));
+        if response.clicked() {
+            state.selected = Some(p.pid);
+        }
+    });
+    // Outline the process shown in the details pane.
+    if state.selected == Some(p.pid) {
+        ui.painter().rect_stroke(
+            area.shrink(1.0),
+            3.0,
+            ui.visuals().selection.stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// A line standing for per-core copies of one process; clicking it opens them.
+fn group_row(ui: &mut Ui, procs: &[ProcInfo], row: &Row, group: &Group, state: &mut TreeState) {
+    let (usage, user, owner) = group_usage(procs, &group.members);
+    let cells = [
+        RichText::new(""),
+        RichText::new(user),
+        RichText::new(&owner),
+        RichText::new(format!("{:.1}%", usage.cpu)).monospace(),
+        RichText::new(fmt_bytes(usage.mem as f64)).monospace(),
+    ];
+    line(ui, cells, |ui| {
+        ui.add_space(row.depth as f32 * INDENT);
+        let arrow = if group.open { "⏷ " } else { "⏵ " };
+        let text = format!("{arrow}{} ({})", group.name, group.members.len());
+        let label = egui::Label::new(text).truncate().sense(Sense::click());
+        let response = ui.add(label).on_hover_ui(|ui| {
+            ui.strong(format!("{} ({} copies)", group.name, group.members.len()));
+            ui.label("One per CPU core or device. Click to list them.");
+            explanation(ui, &group.name, &owner);
+        });
+        if response.clicked() {
+            let parent = procs[row.index].parent.unwrap_or(0);
+            let key = (parent, group.name.clone());
+            if !state.open_groups.remove(&key) {
+                state.open_groups.insert(key);
             }
-        },
-    );
+        }
+    });
 }
 
 /// One line: fixed-width columns on the right, and `name` in whatever is left.
-fn line(ui: &mut Ui, cells: [RichText; 5], name: impl FnOnce(&mut Ui)) {
+/// Returns the area the line covers, across the full width of the list.
+fn line(ui: &mut Ui, cells: [RichText; 5], name: impl FnOnce(&mut Ui)) -> egui::Rect {
     let [pid, user, group, cpu, mem] = cells;
-    ui.horizontal(|ui| {
+    let row = ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             cell(ui, MEM_WIDTH, Layout::right_to_left(Align::Center), mem);
             cell(ui, CPU_WIDTH, Layout::right_to_left(Align::Center), cpu);
@@ -128,6 +341,7 @@ fn line(ui: &mut Ui, cells: [RichText; 5], name: impl FnOnce(&mut Ui)) {
             ui.with_layout(Layout::left_to_right(Align::Center), name);
         });
     });
+    egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), row.response.rect.y_range())
 }
 
 fn cell(ui: &mut Ui, width: f32, layout: Layout, text: RichText) {
@@ -178,6 +392,7 @@ fn details(ui: &mut Ui, p: &ProcInfo, by_pid: &HashMap<u32, &ProcInfo>, now: u64
             );
             field("Command", &p.cmd);
         });
+    explanation(ui, &p.name, &p.group);
 }
 
 pub fn fmt_duration(secs: u64) -> String {
@@ -190,5 +405,58 @@ pub fn fmt_duration(secs: u64) -> String {
         format!("{minutes}m {}s", secs % 60)
     } else {
         format!("{secs}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proc(pid: u32, parent: Option<u32>, name: &str) -> ProcInfo {
+        ProcInfo {
+            pid,
+            parent,
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn kernel() -> Vec<ProcInfo> {
+        vec![
+            proc(2, None, "kthreadd"),
+            proc(3, Some(2), "ksoftirqd/0"),
+            proc(4, Some(2), "rcu_gp"),
+            proc(5, Some(2), "ksoftirqd/1"),
+            proc(6, Some(2), "migration/0"),
+        ]
+    }
+
+    #[test]
+    fn numbered_siblings_fold_into_one_closed_group() {
+        let procs = kernel();
+        let rows = rows(&procs, &TreeState::default());
+        // kthreadd, ksoftirqd group, rcu_gp, and migration alone (one copy stays plain).
+        assert_eq!(rows.len(), 4);
+        let group = rows[1].group.as_ref().unwrap();
+        assert_eq!((group.name.as_str(), group.members.len()), ("ksoftirqd", 2));
+        assert!(rows[3].group.is_none());
+    }
+
+    #[test]
+    fn opening_a_group_lists_its_members() {
+        let procs = kernel();
+        let mut state = TreeState::default();
+        state.open_groups.insert((2, "ksoftirqd".to_string()));
+        let rows = rows(&procs, &state);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(procs[rows[2].index].name, "ksoftirqd/0");
+        assert_eq!(rows[2].depth, 2);
+    }
+
+    #[test]
+    fn collapsed_parent_hides_its_groups() {
+        let procs = kernel();
+        let state = TreeState::new([2]);
+        assert_eq!(rows(&procs, &state).len(), 1);
     }
 }

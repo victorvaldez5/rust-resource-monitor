@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use crate::explain::Risk;
 use eframe::egui::{self, Align, Color32, Layout, RichText, Ui};
 use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
 
@@ -87,6 +88,28 @@ pub fn pressure_text(level: PressureLevel) -> RichText {
 }
 
 /// A framed panel with a title on the left and a temperature on the right.
+/// "What is this?" and "What if I kill it?" for system and kernel processes.
+/// Draws nothing for ordinary applications.
+pub fn explanation(ui: &mut Ui, name: &str, group: &str) {
+    let Some(x) = crate::explain::explain(name, group) else {
+        return;
+    };
+    let color = match x.risk {
+        Risk::Low => GREEN,
+        Risk::Medium => AMBER,
+        Risk::High => RED,
+    };
+    ui.separator();
+    ui.label(RichText::new("What is this?").strong());
+    ui.add(egui::Label::new(x.what).wrap());
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("If it is killed:").strong());
+        ui.label(RichText::new(x.risk.label()).color(color));
+    });
+    ui.add(egui::Label::new(x.if_killed).wrap());
+}
+
 pub fn section(
     ui: &mut Ui,
     title: &str,

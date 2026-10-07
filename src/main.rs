@@ -1,6 +1,8 @@
 mod collect;
+mod explain;
 mod sampler;
 mod snapshot;
+mod tray;
 mod ui;
 
 use std::sync::{Arc, Mutex};
@@ -29,10 +31,11 @@ fn main() -> eframe::Result {
             for row in ui::tree::rows(&procs, &Default::default()) {
                 let p = &procs[row.index];
                 let indent = "  ".repeat(row.depth);
-                println!(
-                    "{:>7} {:<12} {:<16} {indent}{}",
-                    p.pid, p.user, p.group, p.name
-                );
+                let name = match &row.group {
+                    Some(g) => format!("{} ({})", g.name, g.members.len()),
+                    None => p.name.clone(),
+                };
+                println!("{:>7} {:<12} {:<16} {indent}{name}", p.pid, p.user, p.group);
             }
         } else {
             println!("{snapshot:#?}");
@@ -54,7 +57,9 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             sampler::spawn(shared.clone(), cc.egui_ctx.clone());
-            Ok(Box::new(ui::App::new(shared)))
+            let tray = Arc::new(tray::TrayState::default());
+            tray::spawn(shared.clone(), cc.egui_ctx.clone(), tray.clone());
+            Ok(Box::new(ui::App::new(shared, tray)))
         }),
     )
 }

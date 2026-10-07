@@ -3,11 +3,13 @@ mod panel;
 pub mod tree;
 
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, RichText, Ui};
 
 use crate::snapshot::State;
+use crate::tray::TrayState;
 use panel::{BLUE, ORANGE, fmt_bytes, fmt_rate};
 
 /// What the main area shows.
@@ -20,23 +22,24 @@ enum View {
 
 pub struct App {
     shared: Arc<Mutex<State>>,
+    tray: Arc<TrayState>,
     view: View,
-    /// Pids whose children are hidden in the process tree.
-    collapsed: HashSet<u32>,
+    tree: tree::TreeState,
     history_sort: history::Sort,
     /// Process names opened up in the history to show each pid.
     history_open: HashSet<String>,
 }
 
 impl App {
-    pub fn new(shared: Arc<Mutex<State>>) -> Self {
+    pub fn new(shared: Arc<Mutex<State>>, tray: Arc<TrayState>) -> Self {
         /// kthreadd, the parent of every kernel thread. There are hundreds
         /// of them, so they start out folded away.
         const KTHREADD: u32 = 2;
         Self {
             shared,
+            tray,
             view: View::Hardware,
-            collapsed: HashSet::from([KTHREADD]),
+            tree: tree::TreeState::new([KTHREADD]),
             history_sort: Default::default(),
             history_open: HashSet::new(),
         }
@@ -45,6 +48,11 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // With a tray icon to bring it back, closing the window just hides it.
+        if ui.input(|i| i.viewport().close_requested()) && self.tray.active.load(Ordering::Relaxed)
+        {
+            self.tray.hide(ui.ctx());
+        }
         // Copy the state out so the sampler is never blocked while we draw.
         let state = self.shared.lock().unwrap().clone();
         egui::CentralPanel::default().show(ui, |ui| {
@@ -76,7 +84,7 @@ impl eframe::App for App {
                         &mut self.history_open,
                     );
                 }
-                View::Tree => tree::show(ui, &state.snapshot.procs, &mut self.collapsed),
+                View::Tree => tree::show(ui, &state.snapshot.procs, &mut self.tree),
             }
         });
     }

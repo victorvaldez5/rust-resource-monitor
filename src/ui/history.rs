@@ -7,8 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Align, Layout, RichText, Ui};
 
-use super::panel::{fmt_bytes, fmt_rate};
+use super::panel::{explanation, fmt_bytes, fmt_rate};
 use super::tree::fmt_duration;
+use crate::explain::group_key;
 use crate::snapshot::{ProcRecord, ProcUsage};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -167,9 +168,15 @@ struct Line {
 /// Adds up every process that shares a name.
 fn combine(members: &[&ProcRecord]) -> ProcRecord {
     let first = members[0];
+    // Per-core copies such as "ksoftirqd/1" and "ksoftirqd/2" fold into "ksoftirqd".
+    let same_name = members.iter().all(|r| r.name == first.name);
     let mut total = ProcRecord {
         pid: first.pid,
-        name: first.name.clone(),
+        name: if same_name {
+            first.name.clone()
+        } else {
+            group_key(&first.name).to_string()
+        },
         group: first.group.clone(),
         user: first.user.clone(),
         start_time: u64::MAX,
@@ -234,7 +241,7 @@ pub fn show(ui: &mut Ui, records: &[ProcRecord], state: &mut Sort, expanded: &mu
 
     let mut by_name: HashMap<&str, Vec<&ProcRecord>> = HashMap::new();
     for r in records {
-        by_name.entry(&r.name).or_default().push(r);
+        by_name.entry(group_key(&r.name)).or_default().push(r);
     }
     let mut groups: Vec<(ProcRecord, Vec<ProcRecord>)> = by_name
         .into_values()
@@ -328,6 +335,8 @@ pub fn show(ui: &mut Ui, records: &[ProcRecord], state: &mut Sort, expanded: &mu
                                     ui.weak(format!("Belongs to {}", r.group));
                                 }
                                 ui.weak(format!("Average CPU {:.1}%", r.avg_cpu()));
+                                ui.set_max_width(520.0);
+                                explanation(ui, &r.name, &r.group);
                             });
                         });
                     });

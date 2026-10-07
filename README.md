@@ -20,6 +20,19 @@ disk read and write, and network down and up. Processes with the same name, such
 with their usage added up; click it to see each process id. Click a column header to sort by it; click
 again to reverse. Exited processes are dimmed and show only their uptime and last activity.
 
+### System tray
+
+The app puts an icon in the system tray with live ring gauges: CPU on the outside, then
+GPU, then RAM, each filling clockwise from the top and turning yellow above 60% and red
+above 85%. The dot in the middle is the memory pressure: green, yellow or red like the
+RAM graph. Hover for the numbers and temperatures. Click the icon to minimize or restore
+the window, or use its menu. While the icon is up, closing the window minimizes it
+instead of quitting; use "Quit" in the tray menu to exit. Without a GPU reading the icon
+has two rings. If the desktop has no tray, the window behaves as usual.
+
+The tray uses the StatusNotifierItem protocol, which KDE Plasma supports. GNOME needs
+the AppIndicator extension.
+
 ### What a process belongs to
 
 The "Belongs to" label, shown in the process tree and in tooltips, says which application or part of
@@ -37,12 +50,31 @@ Applications are recognised by the systemd unit the desktop starts them in. A pr
 run from a terminal is named after the command that was typed, so everything Claude
 Code starts is "Claude" rather than the terminal it runs in.
 
+### Explanations for system and kernel processes
+
+Hovering a kernel thread or a system service, in either the process tree or the
+process history, adds two short plain-language answers to the tooltip: what the
+process is for, and what happens if it is killed, with a risk label (low risk,
+some risk, dangerous). Numbered kernel threads such as `kworker/0:1H` and
+`ksoftirqd/3` are matched by their base name. Kernel threads and services that
+aren't in the built-in list (`src/explain.rs`) get a general description instead.
+Ordinary applications get no explanation. The descriptions are advice only;
+nothing in the monitor kills processes.
+
 ### Process tree
 
 The "Process tree" tab shows every process under the one that started it, with its
-PID, user, what it belongs to, CPU and memory. Click a process to fold or unfold its
-children. Hovering one shows the chain of processes that started it, its systemd
-unit, how long it has been running and its command line.
+PID, user, what it belongs to, CPU and memory. Click the arrow next to a process to
+fold or unfold its children. Click its name to open a details pane on the right with
+the chain of processes that started it, its systemd unit, how long it has been
+running, its command line and, for system and kernel processes, the plain-language
+explanation. The selected row is outlined while its pane is open. Close the pane with the ✕. Hovering a name shows the same details. When the window
+or the pane leaves too little room, the list scrolls sideways instead of cutting off
+columns.
+
+Per-core copies of a process, such as `ksoftirqd/0`, `ksoftirqd/1` and so on, are
+folded into one line like `ksoftirqd (24)` with their CPU and memory added up. Click it
+to list them. The process history folds them the same way.
 
 ### Memory pressure
 
