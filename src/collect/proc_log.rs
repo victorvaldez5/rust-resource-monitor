@@ -48,6 +48,7 @@ impl ProcLog {
                 name: p.name.clone(),
                 user: p.user.clone(),
                 group: p.group.clone(),
+                unit_description: p.unit_description.clone(),
                 start_time: p.start_time,
                 last_seen: now,
                 last_active: None,
@@ -55,8 +56,10 @@ impl ProcLog {
                 cpu_sum: 0.0,
                 usage: p.usage,
                 running: true,
+                trust: p.trust,
             });
             r.running = true;
+            r.trust = p.trust;
             r.usage = p.usage;
             r.last_seen = now;
             r.samples += 1;

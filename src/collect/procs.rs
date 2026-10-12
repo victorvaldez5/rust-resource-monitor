@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use sysinfo::{Process, System, Users};
 
-use super::owner::Owners;
+use super::owner::{KERNEL, Owners};
+use super::trust::Trusts;
+use super::unit_desc::UnitDescriptions;
 use crate::snapshot::{ProcInfo, ProcUsage};
 
 /// Executable file name when readable, otherwise the (15-char) kernel comm name.
@@ -20,16 +22,25 @@ pub fn display_name(p: &Process) -> String {
         .unwrap_or_else(|| p.name().to_string_lossy().into_owned())
 }
 
+/// Per-pid `[a, b]` figures from the GPU and network collectors.
+pub struct PerPid<'a> {
+    /// VRAM bytes and GPU percent.
+    pub gpu: &'a HashMap<u32, [f64; 2]>,
+    /// Bytes per second down and up.
+    pub net: &'a HashMap<u32, [f64; 2]>,
+}
+
 /// Every process, ordered by pid, for the process tree.
 ///
-/// `gpu` and `net` are per-pid figures from their collectors; `secs` is the
+/// `per_pid` holds the GPU and network figures; `secs` is the
 /// time since the previous sample, for turning disk byte counts into rates.
 pub fn list(
     sys: &System,
     owners: &Owners,
+    units: &mut UnitDescriptions,
+    trusts: &mut Trusts,
     users: &Users,
-    gpu: &HashMap<u32, [f64; 2]>,
-    net: &HashMap<u32, [f64; 2]>,
+    per_pid: PerPid,
     secs: f64,
 ) -> Vec<ProcInfo> {
     /// Long enough to recognise a command, short enough for a tooltip.
@@ -46,14 +57,16 @@ pub fn list(
             });
             let cmd: Vec<_> = p.cmd().iter().map(|arg| arg.to_string_lossy()).collect();
             let io = p.disk_usage();
-            let gpu = gpu.get(&pid.as_u32()).copied().unwrap_or_default();
-            let net = net.get(&pid.as_u32()).copied().unwrap_or_default();
+            let gpu = per_pid.gpu.get(&pid.as_u32()).copied().unwrap_or_default();
+            let net = per_pid.net.get(&pid.as_u32()).copied().unwrap_or_default();
+            let (trust, provenance) = trusts.lookup(pid.as_u32(), p.exe(), owner.group == KERNEL);
             ProcInfo {
                 pid: pid.as_u32(),
                 parent: p.parent().map(|parent| parent.as_u32()),
                 name: display_name(p),
                 user: user.unwrap_or_default(),
                 group: owner.group,
+                unit_description: units.get(&owner.unit),
                 unit: owner.unit,
                 cmd: cmd.join(" ").chars().take(CMD_MAX).collect(),
                 usage: ProcUsage {
@@ -67,9 +80,12 @@ pub fn list(
                     net_up: net[1],
                 },
                 start_time: p.start_time(),
+                trust,
+                provenance,
             }
         })
         .collect();
     out.sort_by_key(|p| p.pid);
+    trusts.retain(&out.iter().map(|p| p.pid).collect());
     out
 }

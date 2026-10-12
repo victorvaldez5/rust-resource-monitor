@@ -1,14 +1,18 @@
 mod cpu;
+mod filehash;
 mod gpu_amd;
 mod gpu_nvidia;
 mod mem;
 mod net;
 mod owner;
 mod ping;
+mod pkg;
 mod proc_log;
 mod procs;
 mod storage;
 mod temps;
+mod trust;
+mod unit_desc;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,6 +33,8 @@ pub struct Collector {
     nvidia: Option<gpu_nvidia::Nvidia>,
     amd: Vec<gpu_amd::AmdGpu>,
     proc_log: proc_log::ProcLog,
+    units: unit_desc::UnitDescriptions,
+    trusts: trust::Trusts,
     last_sample: Instant,
 }
 
@@ -47,6 +53,8 @@ impl Collector {
             nvidia: gpu_nvidia::Nvidia::new(),
             amd: gpu_amd::discover(),
             proc_log: proc_log::ProcLog::default(),
+            units: Default::default(),
+            trusts: trust::Trusts::new(),
             last_sample: Instant::now(),
         };
         // CPU and I/O figures are deltas, so the first real sample needs a baseline.
@@ -76,9 +84,13 @@ impl Collector {
         let procs = procs::list(
             &self.sys,
             &owners,
+            &mut self.units,
+            &mut self.trusts,
             &self.users,
-            &gpu_procs,
-            self.net.per_pid(),
+            procs::PerPid {
+                gpu: &gpu_procs,
+                net: self.net.per_pid(),
+            },
             secs,
         );
         let proc_log = self.proc_log.update(&procs);
@@ -92,6 +104,11 @@ impl Collector {
             procs: Arc::new(procs),
             proc_log,
         }
+    }
+
+    /// Program files whose origin is still being worked out.
+    pub fn trust_pending(&self) -> usize {
+        self.trusts.pending()
     }
 
     fn refresh_system(&mut self) {

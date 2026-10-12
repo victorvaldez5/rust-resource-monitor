@@ -6,7 +6,7 @@ use sysinfo::{Pid, Process, System};
 
 use super::{procs, temps};
 
-const KERNEL: &str = "Kernel";
+pub const KERNEL: &str = "Kernel";
 const SYSTEM: &str = "System";
 const SESSION: &str = "User session";
 const KDE: &str = "KDE";

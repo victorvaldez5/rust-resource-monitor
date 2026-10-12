@@ -28,6 +28,8 @@ pub struct Explanation {
     /// What happens if it is stopped.
     pub if_killed: &'static str,
     pub risk: Risk,
+    /// False for the general fallbacks, which say nothing about this process in particular.
+    pub curated: bool,
 }
 
 const fn e(what: &'static str, if_killed: &'static str, risk: Risk) -> Explanation {
@@ -35,19 +37,27 @@ const fn e(what: &'static str, if_killed: &'static str, risk: Risk) -> Explanati
         what,
         if_killed,
         risk,
+        curated: true,
     }
 }
 
-const KERNEL_GENERIC: Explanation = e(
+const fn generic(what: &'static str, if_killed: &'static str, risk: Risk) -> Explanation {
+    Explanation {
+        curated: false,
+        ..e(what, if_killed, risk)
+    }
+}
+
+const KERNEL_GENERIC: Explanation = generic(
     "A thread inside the Linux kernel, the core of the operating system. The kernel \
      uses these to do its own housekeeping in the background, such as talking to \
      hardware or tidying memory. They have no program file and show no window.",
-    "You can't. The kernel ignores kill signals sent to its own threads, so the \
-     attempt is refused or does nothing. They are not apps and are not worth worrying about.",
+    "Normally you can't. Kernel threads ignore kill signals, so nothing happens (or \
+     you are told you lack permission). They are not apps and are not worth worrying about.",
     Risk::Low,
 );
 
-const SYSTEM_GENERIC: Explanation = e(
+const SYSTEM_GENERIC: Explanation = generic(
     "A background service started by the system rather than by you, usually when \
      the computer booted.",
     "Unknown. Look up its name before stopping it. Most services are restarted by \
@@ -84,7 +94,7 @@ const KERNEL_THREADS: &[(&str, Explanation)] = &[
     (
         "migration",
         e(
-            "Moves running programs from one CPU core to another so the load stays balanced. One per core.",
+            "Carries out the moves of programs between CPU cores that the scheduler decides on. One per core.",
             "Can't be killed. Without it, work could pile up on a single core.",
             Risk::Low,
         ),
@@ -118,22 +128,6 @@ const KERNEL_THREADS: &[(&str, Explanation)] = &[
         e(
             "Part of RCU, the way the kernel safely frees data that many threads may still be reading.",
             "Can't be killed.",
-            Risk::Low,
-        ),
-    ),
-    (
-        "kcompactd0",
-        e(
-            "Defragments RAM: it moves memory around so large free blocks are available.",
-            "Can't be killed. Without it, big memory requests could get slower.",
-            Risk::Low,
-        ),
-    ),
-    (
-        "kswapd0",
-        e(
-            "Frees up RAM when it runs low, by pushing rarely used data out to swap or dropping cached files. It is busy when memory is nearly full.",
-            "Can't be killed. If it is using a lot of CPU, you are short on RAM; close some applications.",
             Risk::Low,
         ),
     ),
@@ -226,6 +220,14 @@ const KERNEL_THREADS: &[(&str, Explanation)] = &[
         ),
     ),
     (
+        "watchdogd",
+        e(
+            "Feeds the hardware watchdog timer so the computer is not reset by mistake.",
+            "Can't be killed. If it stopped, the machine could reboot itself.",
+            Risk::Low,
+        ),
+    ),
+    (
         "kblockd",
         e(
             "Handles requests to read and write storage drives.",
@@ -244,8 +246,8 @@ const KERNEL_THREADS: &[(&str, Explanation)] = &[
     (
         "psimon",
         e(
-            "Measures how much programs are waiting on CPU, memory or disk. The desktop uses it to spot trouble.",
-            "Can't be killed. Memory pressure figures would stop updating.",
+            "Watches a pressure alert that a program set up (for example systemd-oomd) and wakes it when the system is short of CPU, memory or disk.",
+            "Can't be killed. Nothing happens, and the pressure numbers are unaffected.",
             Risk::Low,
         ),
     ),
@@ -261,6 +263,38 @@ const KERNEL_THREADS: &[(&str, Explanation)] = &[
 
 /// Kernel threads named after the part of the kernel they belong to.
 const KERNEL_PREFIXES: &[(&str, Explanation)] = &[
+    (
+        "UVM",
+        e(
+            "Runs work for the NVIDIA graphics driver.",
+            "Can't be killed. The graphics driver could stop working.",
+            Risk::Medium,
+        ),
+    ),
+    (
+        "md",
+        e(
+            "Manages software RAID, which combines several drives into one.",
+            "Can't be killed. The array could stop working.",
+            Risk::High,
+        ),
+    ),
+    (
+        "kcompactd",
+        e(
+            "Defragments RAM: it moves memory around so large free blocks are available.",
+            "Can't be killed. Without it, big memory requests could get slower.",
+            Risk::Low,
+        ),
+    ),
+    (
+        "kswapd",
+        e(
+            "Frees up RAM when it runs low, by pushing rarely used data out to swap or dropping cached files. It is busy when memory is nearly full.",
+            "Can't be killed. If it is using a lot of CPU, you are short on RAM; close some applications.",
+            Risk::Low,
+        ),
+    ),
     (
         "rcu_",
         e(
@@ -312,7 +346,7 @@ const KERNEL_PREFIXES: &[(&str, Explanation)] = &[
     (
         "btrfs",
         e(
-            "Background work for a Btrfs drive: checking, balancing and cleaning.",
+            "Background upkeep for a Btrfs drive: saving pending changes to disk and deleting removed snapshots.",
             "Can't be killed. The drive could not be written to safely.",
             Risk::High,
         ),
@@ -320,25 +354,25 @@ const KERNEL_PREFIXES: &[(&str, Explanation)] = &[
     (
         "nvme",
         e(
-            "Talks to an NVMe solid-state drive.",
-            "Can't be killed. The drive would stop responding.",
-            Risk::High,
+            "Background helper for an NVMe drive's controller, such as resets and housekeeping.",
+            "Can't be killed. The drive could stop responding.",
+            Risk::Medium,
         ),
     ),
     (
         "scsi_",
         e(
-            "Talks to a storage drive (SATA, USB or SCSI).",
-            "Can't be killed. The drive would stop responding.",
-            Risk::High,
+            "Recovers a SATA, USB or SCSI drive after it reports an error. It is idle unless a drive misbehaves.",
+            "Can't be killed. Drive error recovery would not run.",
+            Risk::Low,
         ),
     ),
     (
         "ata_",
         e(
-            "Talks to a SATA drive.",
-            "Can't be killed. The drive would stop responding.",
-            Risk::High,
+            "Background helper for a SATA drive's controller, such as resets and housekeeping.",
+            "Can't be killed. The drive could stop responding.",
+            Risk::Medium,
         ),
     ),
     (
@@ -452,8 +486,8 @@ const SERVICES: &[(&str, Explanation)] = &[
     (
         "switcheroo-control",
         e(
-            "Chooses which graphics card runs which app on computers with two.",
-            "Apps use the default graphics card.",
+            "Tells the desktop whether the computer has two graphics cards, so it can offer to run an app on the stronger one.",
+            "The 'run with dedicated graphics' option goes away. Apps use the default card.",
             Risk::Low,
         ),
     ),
@@ -485,7 +519,7 @@ const SERVICES: &[(&str, Explanation)] = &[
         "systemd",
         e(
             "The first program the system starts and the parent of nearly everything. It starts and watches every other service. A second copy runs for your login (as your user) and does the same for your session.",
-            "The system copy (pid 1) can't be stopped; trying shuts nothing down but can destabilise things. Stopping your own copy ends your session and closes your apps.",
+            "The system copy (pid 1) is protected: it can't be killed, and a polite stop request just makes it reload itself. Stopping your own copy ends your session and closes your apps.",
             Risk::High,
         ),
     ),
@@ -516,8 +550,8 @@ const SERVICES: &[(&str, Explanation)] = &[
     (
         "systemd-oomd",
         e(
-            "Ends a runaway program early when memory is nearly full, so the desktop stays usable.",
-            "Nothing visible. The computer may freeze longer if you run out of memory.",
+            "Watches memory pressure and, when memory is nearly full, ends a whole group of programs early so the desktop stays usable.",
+            "Nothing visible. Without it, a memory shortage may freeze the computer for longer. systemd restarts it if it crashes.",
             Risk::Low,
         ),
     ),
@@ -589,7 +623,7 @@ const SERVICES: &[(&str, Explanation)] = &[
         "bluetoothd",
         e(
             "Handles Bluetooth: pairing and connecting headphones, mice and so on.",
-            "Bluetooth devices disconnect until it restarts.",
+            "Bluetooth devices disconnect. It may start again when an app asks for Bluetooth, or you can restart it.",
             Risk::Low,
         ),
     ),
@@ -604,8 +638,8 @@ const SERVICES: &[(&str, Explanation)] = &[
     (
         "sshd",
         e(
-            "Lets other computers log in to this one over the network.",
-            "Nobody can connect remotely. Connections already open usually stay up.",
+            "Handles remote logins over the network (SSH). There is usually one copy per connection.",
+            "Ends that one remote login. If this is the main listener, new logins stop until it is started again.",
             Risk::Low,
         ),
     ),
@@ -685,7 +719,7 @@ const SERVICES: &[(&str, Explanation)] = &[
         "firewalld",
         e(
             "The firewall, controlling which connections may reach your computer.",
-            "Rules may stop being applied, leaving the computer more exposed.",
+            "Rules already loaded stay active, but firewall changes and automatic rules for new networks stop working until it is back.",
             Risk::Medium,
         ),
     ),
@@ -749,7 +783,7 @@ const SERVICES: &[(&str, Explanation)] = &[
         "plasmashell",
         e(
             "The KDE desktop itself: the panel, menu, wallpaper and widgets.",
-            "The panel and wallpaper vanish. Your windows stay open. Restart it with 'plasmashell --replace'.",
+            "The panel and wallpaper vanish. Your windows stay open. It may restart by itself; if not, run 'plasmashell --replace'.",
             Risk::Medium,
         ),
     ),
@@ -772,12 +806,30 @@ const SERVICES: &[(&str, Explanation)] = &[
     (
         "ss",
         e(
-            "A short-lived tool this monitor runs to see which programs are using the network.",
+            "A short-lived command that lists network connections. This monitor runs it to match connections to programs.",
             "Nothing. It exits by itself.",
             Risk::Low,
         ),
     ),
 ];
+
+/// Which table an entry comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Table {
+    KernelThread,
+    KernelPrefix,
+    Service,
+}
+
+/// Every hand-written entry, for the `--check-explain` review.
+pub fn entries() -> impl Iterator<Item = (Table, &'static str, &'static Explanation)> {
+    let tagged = |table, list: &'static [(&'static str, Explanation)]| {
+        list.iter().map(move |(k, x)| (table, *k, x))
+    };
+    tagged(Table::KernelThread, KERNEL_THREADS)
+        .chain(tagged(Table::KernelPrefix, KERNEL_PREFIXES))
+        .chain(tagged(Table::Service, SERVICES))
+}
 
 /// Removes the numbering kernel threads carry, so "ksoftirqd/3" and
 /// "kworker/0:1H-events" become "ksoftirqd" and "kworker".
@@ -794,6 +846,15 @@ pub fn group_key(name: &str) -> &str {
     }
 }
 
+/// "md" is too short to match on its own: RAID threads are "md0_raid1" and the like.
+fn prefix_matches(key: &str, base: &str) -> bool {
+    match base.strip_prefix(key) {
+        Some(rest) if key == "md" => rest.starts_with(|c: char| c.is_ascii_digit()),
+        Some(_) => true,
+        None => false,
+    }
+}
+
 /// Without permission to read the program file, the kernel's name for it is cut
 /// to 15 characters, so "systemd-journald" arrives as "systemd-journal".
 fn matches_service(key: &str, name: &str) -> bool {
@@ -807,10 +868,11 @@ pub fn explain(name: &str, group: &str) -> Option<Explanation> {
     let is_kernel = group == "Kernel";
     let base = base_name(name);
     if is_kernel {
-        let found = KERNEL_THREADS
-            .iter()
-            .find(|(k, _)| *k == base)
-            .or_else(|| KERNEL_PREFIXES.iter().find(|(k, _)| base.starts_with(k)));
+        let found = KERNEL_THREADS.iter().find(|(k, _)| *k == base).or_else(|| {
+            KERNEL_PREFIXES
+                .iter()
+                .find(|(k, _)| prefix_matches(k, base))
+        });
         return Some(found.map_or(KERNEL_GENERIC, |(_, x)| *x));
     }
     let found = SERVICES.iter().find(|(k, _)| matches_service(k, name));
@@ -871,6 +933,38 @@ mod tests {
         assert_eq!(group_key("idle_inject/12"), "idle_inject");
         assert_eq!(group_key("kswapd0"), "kswapd0");
         assert_eq!(group_key("/odd"), "/odd");
+    }
+
+    #[test]
+    fn md_prefix_only_matches_raid_threads() {
+        assert!(
+            explain("md127_resync", "Kernel")
+                .unwrap()
+                .what
+                .contains("RAID")
+        );
+        assert!(
+            explain("mdio_thread", "Kernel")
+                .unwrap()
+                .what
+                .contains("Linux kernel")
+        );
+        assert!(explain("kswapd1", "Kernel").unwrap().what.contains("RAM"));
+    }
+
+    #[test]
+    fn only_listed_entries_count_as_curated() {
+        assert!(explain("ksoftirqd/2", "Kernel").unwrap().curated);
+        assert!(!explain("mystery_thread", "Kernel").unwrap().curated);
+        assert!(!explain("some-new-daemon", "System").unwrap().curated);
+    }
+
+    #[test]
+    fn entries_have_no_duplicate_keys_within_a_table() {
+        let mut seen = std::collections::HashSet::new();
+        for (table, key, _) in entries() {
+            assert!(seen.insert((table, key)), "duplicate entry {key}");
+        }
     }
 
     #[test]

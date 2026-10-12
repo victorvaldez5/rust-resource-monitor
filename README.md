@@ -58,8 +58,13 @@ process is for, and what happens if it is killed, with a risk label (low risk,
 some risk, dangerous). Numbered kernel threads such as `kworker/0:1H` and
 `ksoftirqd/3` are matched by their base name. Kernel threads and services that
 aren't in the built-in list (`src/explain.rs`) get a general description instead.
-Ordinary applications get no explanation. The descriptions are advice only;
+For a service that isn't in the list, the tooltip also quotes the one-line description
+from its systemd unit file. Ordinary applications get no explanation. The descriptions are advice only;
 nothing in the monitor kills processes.
+
+`cargo run --release -- --check-explain` prints every service entry next to the man
+page, systemd description and package summary this machine has for it, and lists the
+running processes that only get a general description. Use it to review the texts.
 
 ### Process tree
 
@@ -68,13 +73,42 @@ PID, user, what it belongs to, CPU and memory. Click the arrow next to a process
 fold or unfold its children. Click its name to open a details pane on the right with
 the chain of processes that started it, its systemd unit, how long it has been
 running, its command line and, for system and kernel processes, the plain-language
-explanation. The selected row is outlined while its pane is open. Close the pane with the ✕. Hovering a name shows the same details. When the window
-or the pane leaves too little room, the list scrolls sideways instead of cutting off
-columns.
+explanation. The selected row is outlined while its pane is open. Close the pane with its Close
+button, with Esc, or by clicking the selected name again. Hovering a name shows the same details. When the window
+or the pane leaves too little room, the list scrolls sideways (drag the bar at the
+bottom, or hold Shift and use the mouse wheel) instead of cutting off columns.
 
 Per-core copies of a process, such as `ksoftirqd/0`, `ksoftirqd/1` and so on, are
 folded into one line like `ksoftirqd (24)` with their CPU and memory added up. Click it
 to list them. The process history folds them the same way.
+
+### Where a program came from
+
+Each process's program file is checked against the system's package manager (`rpm`,
+`dpkg` or `pacman`, whichever the system has) and given a verdict. Linux has no
+universal code signing, so this answers "where did this come from, and has it been
+changed?", not "is it safe?".
+
+| Verdict | Meaning |
+|---|---|
+| Verified | A package from your distribution owns the file and it matches the package. |
+| Updated | The package was updated after the process started; restart it. |
+| Third-party | An unsigned package or one from outside the distribution (RPM Fusion, a vendor repo, a PPA, the AUR), or a Flatpak or Snap. |
+| Unpackaged | No package owns the file (something in your home folder, `/tmp`, a build). |
+| Deleted | The file was deleted while it runs and no package owns it. |
+| Modified | A package owns the file but its size or contents differ from the package. |
+| Unknown | Not checked yet, or the file can't be read. |
+
+The history table has a sortable "Trust" column (worst first). In the process tree a
+coloured dot marks anything other than Verified, and the details pane gives the reason
+and, for files that aren't verified, the SHA-256 of the program file. Results are
+worked out in the background, so a new process shows Unknown for a moment.
+
+Limits: a script run by an interpreter shows the interpreter's verdict, not the
+script's; the dpkg and pacman checks are covered by unit tests but have not been
+tried on those systems; protected programs (setuid or with capabilities) and other
+users' processes need root to be read. `--dump-trust` prints every process that isn't
+Verified, with its reason and hash.
 
 ### Memory pressure
 
@@ -106,7 +140,8 @@ checking what sensors were found:
 cargo run --release -- --dump
 ```
 
-`--dump-tree` prints the process tree the same way.
+`--dump-tree` prints the process tree the same way, and `--dump-trust` prints where
+each program came from.
 
 ## Requirements
 

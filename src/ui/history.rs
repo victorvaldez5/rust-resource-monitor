@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Align, Layout, RichText, Ui};
 
-use super::panel::{explanation, fmt_bytes, fmt_rate};
+use super::panel::{explanation, fmt_bytes, fmt_rate, trust_color};
 use super::tree::fmt_duration;
 use crate::explain::group_key;
 use crate::snapshot::{ProcRecord, ProcUsage};
@@ -28,13 +28,15 @@ pub enum Col {
     DiskWrite,
     NetDown,
     NetUp,
+    Trust,
 }
 
 /// Every column to the right of the name, left to right, with its width.
-const COLUMNS: [(Col, &str, f32); 13] = [
+const COLUMNS: [(Col, &str, f32); 14] = [
     (Col::Pid, "PID", 56.0),
     (Col::User, "User", 88.0),
     (Col::Group, "Belongs to", 110.0),
+    (Col::Trust, "Trust", 84.0),
     (Col::Uptime, "Uptime", 72.0),
     (Col::Active, "Active", 80.0),
     (Col::Cpu, "CPU", 54.0),
@@ -103,6 +105,7 @@ fn sort(records: &mut [ProcRecord], sort: Sort) {
             Col::DiskWrite => u.disk_write,
             Col::NetDown => u.net_down,
             Col::NetUp => u.net_up,
+            Col::Trust => r.trust.severity() as f64,
         }
     };
     records.sort_by(|a, b| {
@@ -124,7 +127,7 @@ fn sort(records: &mut [ProcRecord], sort: Sort) {
 /// Text columns line up on the left, numbers on the right.
 fn cell_layout(col: Col) -> Layout {
     match col {
-        Col::User | Col::Group => Layout::left_to_right(Align::Center),
+        Col::User | Col::Group | Col::Trust => Layout::left_to_right(Align::Center),
         _ => Layout::right_to_left(Align::Center),
     }
 }
@@ -154,6 +157,7 @@ fn value(r: &ProcRecord, count: usize, col: Col, now: u64) -> String {
         Col::DiskWrite => nonzero(u.disk_write > 0.0, fmt_rate(u.disk_write)),
         Col::NetDown => nonzero(u.net_down > 0.0, fmt_rate(u.net_down)),
         Col::NetUp => nonzero(u.net_up > 0.0, fmt_rate(u.net_up)),
+        Col::Trust => r.trust.label().to_string(),
     }
 }
 
@@ -178,9 +182,11 @@ fn combine(members: &[&ProcRecord]) -> ProcRecord {
             group_key(&first.name).to_string()
         },
         group: first.group.clone(),
+        unit_description: first.unit_description.clone(),
         user: first.user.clone(),
         start_time: u64::MAX,
         samples: 1,
+        trust: first.trust,
         ..Default::default()
     };
     let mut usage = ProcUsage::default();
@@ -199,6 +205,9 @@ fn combine(members: &[&ProcRecord]) -> ProcRecord {
         total.last_active = total.last_active.max(r.last_active);
         total.cpu_sum += r.avg_cpu();
         total.running |= r.running;
+        if r.trust.severity() > total.trust.severity() {
+            total.trust = r.trust;
+        }
         if r.user != total.user {
             total.user = "various".to_string();
         }
@@ -292,7 +301,9 @@ pub fn show(ui: &mut Ui, records: &[ProcRecord], state: &mut Sort, expanded: &mu
                                 |ui| {
                                     ui.set_min_width(*width);
                                     let text = RichText::new(value(r, count, *col, now));
-                                    let text = if matches!(col, Col::User | Col::Group) {
+                                    let text = if col == &Col::Trust {
+                                        text.color(trust_color(r.trust))
+                                    } else if matches!(col, Col::User | Col::Group) {
                                         text
                                     } else {
                                         text.monospace()
@@ -336,7 +347,7 @@ pub fn show(ui: &mut Ui, records: &[ProcRecord], state: &mut Sort, expanded: &mu
                                 }
                                 ui.weak(format!("Average CPU {:.1}%", r.avg_cpu()));
                                 ui.set_max_width(520.0);
-                                explanation(ui, &r.name, &r.group);
+                                explanation(ui, &r.name, &r.group, &r.unit_description);
                             });
                         });
                     });

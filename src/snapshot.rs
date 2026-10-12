@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+use crate::security::{Provenance, Trust};
+
 /// Number of samples kept for the history graphs (one per second).
 pub const HISTORY_LEN: usize = 60;
 
@@ -132,10 +134,15 @@ pub struct ProcInfo {
     pub group: String,
     /// The systemd unit it runs in, or "" if none.
     pub unit: String,
+    /// The unit's `Description=` line, or "" if it has none.
+    pub unit_description: String,
     pub cmd: String,
     pub usage: ProcUsage,
     /// Seconds since the Unix epoch.
     pub start_time: u64,
+    pub trust: Trust,
+    /// Where the program file came from, once the worker has checked it.
+    pub provenance: Option<Arc<Provenance>>,
 }
 
 /// A process seen since the monitor started, running or not.
@@ -146,6 +153,8 @@ pub struct ProcRecord {
     pub user: String,
     /// What the process belongs to, such as "Kernel", "KDE" or "Zen".
     pub group: String,
+    /// The description of its systemd unit, or "".
+    pub unit_description: String,
     /// Seconds since the Unix epoch.
     pub start_time: u64,
     /// Seconds since the Unix epoch of the last sample it appeared in.
@@ -158,6 +167,7 @@ pub struct ProcRecord {
     /// Zero once it has exited.
     pub usage: ProcUsage,
     pub running: bool,
+    pub trust: Trust,
 }
 
 impl ProcRecord {

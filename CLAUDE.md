@@ -13,6 +13,8 @@ and `ss`.
 - `cargo run --release -- --dump`: print one full `Snapshot` as text. Use this to
   check collectors without opening a window.
 - `cargo run --release -- --dump-tree`: print the process tree as text.
+- `cargo run --release -- --dump-trust`: print every process whose program is not package-verified, with reason and SHA-256. Waits for the background checks to finish.
+- `cargo run --release -- --check-explain`: review aid for `src/explain.rs`. Prints each service entry beside the man page, systemd description and package summary, then lists running processes that only get a general description. Run it now and then and after adding entries.
 
 Do not run `cargo run --release` without `--dump`: it opens a window and blocks.
 
@@ -25,7 +27,8 @@ Do not run `cargo run --release` without `--dump`: it opens a window and blocks.
   - `procs.rs` builds the per-pid `ProcInfo` list from sysinfo plus per-pid GPU and network maps.
   - `proc_log.rs` remembers every process seen, including exited ones.
   - `owner.rs` maps a pid to the app or system part it belongs to (systemd unit and cgroup).
-- `src/explain.rs`: plain-language "what is this / what if killed" text for kernel threads and system services, plus `group_key` for folding per-core copies like `ksoftirqd/3`. Add entries to its tables.
+- `src/explain.rs`: plain-language "what is this / what if killed" text for kernel threads and system services, plus `group_key` for folding per-core copies like `ksoftirqd/3`. Add entries to its tables; `src/check_explain.rs` is the `--check-explain` review. `collect/unit_desc.rs` reads systemd `Description=` lines for the fallback.
+- `src/security.rs`: `Trust` verdicts and the pure `classify` function. `collect/trust.rs` runs the checks on a worker thread (the sampler only reads finished results); `collect/pkg.rs` wraps rpm/dpkg/pacman with pure output parsers; `collect/filehash.rs` hashes files.
 - `src/tray.rs`: StatusNotifierItem tray icon (ksni) on its own thread. Draws the CPU/GPU gauge pixels itself; `TrayState` is how the window learns whether a tray exists (close hides instead of quitting).
 - `src/ui/`: egui code. The app copies the state out of the mutex each frame and never holds the lock while drawing.
   - `mod.rs` has the tabs and hardware panels, `history.rs` the process history table, `tree.rs` the process tree (details pane, per-core groups).

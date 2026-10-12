@@ -6,6 +6,7 @@ use crate::explain::Risk;
 use eframe::egui::{self, Align, Color32, Layout, RichText, Ui};
 use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
 
+use crate::security::Trust;
 use crate::snapshot::{HISTORY_LEN, PressureLevel};
 
 pub const BLUE: Color32 = Color32::from_rgb(86, 156, 240);
@@ -34,6 +35,17 @@ pub fn fmt_rate(bytes_per_sec: f64) -> String {
         format!("{:.1} MiB/s", bytes_per_sec / MIB)
     } else {
         format!("{:.0} KiB/s", bytes_per_sec / 1024.0)
+    }
+}
+
+/// Colour for a trust verdict: quiet for the good ones, louder as it gets worse.
+pub fn trust_color(trust: Trust) -> Color32 {
+    match trust {
+        Trust::Verified => GREEN,
+        Trust::Kernel | Trust::Unknown | Trust::Stale => Color32::GRAY,
+        Trust::ThirdParty => BLUE,
+        Trust::Unpackaged => AMBER,
+        Trust::Deleted | Trust::Modified => RED,
     }
 }
 
@@ -90,7 +102,7 @@ pub fn pressure_text(level: PressureLevel) -> RichText {
 /// A framed panel with a title on the left and a temperature on the right.
 /// "What is this?" and "What if I kill it?" for system and kernel processes.
 /// Draws nothing for ordinary applications.
-pub fn explanation(ui: &mut Ui, name: &str, group: &str) {
+pub fn explanation(ui: &mut Ui, name: &str, group: &str, unit_description: &str) {
     let Some(x) = crate::explain::explain(name, group) else {
         return;
     };
@@ -102,6 +114,16 @@ pub fn explanation(ui: &mut Ui, name: &str, group: &str) {
     ui.separator();
     ui.label(RichText::new("What is this?").strong());
     ui.add(egui::Label::new(x.what).wrap());
+    // For services without a written description, the system's own one-liner is the best there is.
+    if !x.curated && !unit_description.is_empty() {
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(format!(
+                "The system describes it as: \"{unit_description}\""
+            ))
+            .wrap(),
+        );
+    }
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new("If it is killed:").strong());

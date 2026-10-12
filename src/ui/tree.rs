@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Align, Layout, RichText, Sense, Ui};
 
-use super::panel::{explanation, fmt_bytes};
+use super::panel::{explanation, fmt_bytes, trust_color};
 use crate::explain::group_key;
+use crate::security::Trust;
 use crate::snapshot::{ProcInfo, ProcUsage};
 
 const INDENT: f32 = 16.0;
@@ -17,7 +18,7 @@ const GROUP_WIDTH: f32 = 120.0;
 const CPU_WIDTH: f32 = 60.0;
 const MEM_WIDTH: f32 = 84.0;
 /// The name column never gets narrower than this; the list scrolls sideways instead.
-const NAME_MIN_WIDTH: f32 = 220.0;
+const NAME_MIN_WIDTH: f32 = 160.0;
 
 /// What the user has folded, opened and picked in the tree.
 #[derive(Default)]
@@ -182,6 +183,11 @@ pub fn show(ui: &mut Ui, procs: &[ProcInfo], state: &mut TreeState) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
+    if state.selected.is_some()
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        state.selected = None;
+    }
     if let Some(pid) = state.selected {
         // Docked before the list so the list gets what is left.
         egui::Panel::right("process_pane")
@@ -189,12 +195,11 @@ pub fn show(ui: &mut Ui, procs: &[ProcInfo], state: &mut TreeState) {
             .size_range(260.0..=700.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // Plain text and on the left: a glyph at the far edge can go unseen.
+                    if ui.button("Close").on_hover_text("Esc").clicked() {
+                        state.selected = None;
+                    }
                     ui.weak("Process details");
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.small_button("✕").clicked() {
-                            state.selected = None;
-                        }
-                    });
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| match by_pid.get(&pid) {
@@ -221,29 +226,34 @@ pub fn show(ui: &mut Ui, procs: &[ProcInfo], state: &mut TreeState) {
     let fixed = PID_WIDTH + USER_WIDTH + GROUP_WIDTH + CPU_WIDTH + MEM_WIDTH;
     let min_width = fixed + NAME_MIN_WIDTH + ui.spacing().item_spacing.x * 6.0;
     let width = ui.available_width().max(min_width);
-    egui::ScrollArea::horizontal().show(ui, |ui| {
-        ui.set_width(width);
-        let header =
-            ["PID", "User", "Belongs to", "CPU", "Memory"].map(|h| RichText::new(h).weak());
-        line(ui, header, |ui| {
-            ui.weak("Process");
-        });
-        ui.separator();
-        // Only the lines scrolled into view are laid out.
-        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
-            ui,
-            height,
-            rows.len(),
-            |ui, range| {
-                for row in &rows[range] {
-                    match &row.group {
-                        Some(group) => group_row(ui, procs, row, group, state),
-                        None => process_row(ui, procs, row, state, &by_pid, now),
+    // A bar that is always there, so it is clear the list can be moved sideways
+    // (Shift + mouse wheel also does it).
+    ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
+    egui::ScrollArea::horizontal()
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .show(ui, |ui| {
+            ui.set_width(width);
+            let header =
+                ["PID", "User", "Belongs to", "CPU", "Memory"].map(|h| RichText::new(h).weak());
+            line(ui, header, |ui| {
+                ui.weak("Process");
+            });
+            ui.separator();
+            // Only the lines scrolled into view are laid out.
+            egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+                ui,
+                height,
+                rows.len(),
+                |ui, range| {
+                    for row in &rows[range] {
+                        match &row.group {
+                            Some(group) => group_row(ui, procs, row, group, state),
+                            None => process_row(ui, procs, row, state, &by_pid, now),
+                        }
                     }
-                }
-            },
-        );
-    });
+                },
+            );
+        });
 }
 
 fn process_row(
@@ -274,6 +284,10 @@ fn process_row(
         if arrow.clicked() && row.children > 0 && !state.collapsed.remove(&p.pid) {
             state.collapsed.insert(p.pid);
         }
+        if !matches!(p.trust, Trust::Verified | Trust::Kernel) {
+            ui.label(RichText::new("●").color(trust_color(p.trust)))
+                .on_hover_text(p.trust.label());
+        }
         let name = RichText::new(&p.name);
         let name = if state.selected == Some(p.pid) {
             name.strong().underline()
@@ -283,7 +297,8 @@ fn process_row(
         let label = egui::Label::new(name).truncate().sense(Sense::click());
         let response = ui.add(label).on_hover_ui(|ui| details(ui, p, by_pid, now));
         if response.clicked() {
-            state.selected = Some(p.pid);
+            // Clicking the selected process again closes the pane.
+            state.selected = (state.selected != Some(p.pid)).then_some(p.pid);
         }
     });
     // Outline the process shown in the details pane.
@@ -315,7 +330,7 @@ fn group_row(ui: &mut Ui, procs: &[ProcInfo], row: &Row, group: &Group, state: &
         let response = ui.add(label).on_hover_ui(|ui| {
             ui.strong(format!("{} ({} copies)", group.name, group.members.len()));
             ui.label("One per CPU core or device. Click to list them.");
-            explanation(ui, &group.name, &owner);
+            explanation(ui, &group.name, &owner, "");
         });
         if response.clicked() {
             let parent = procs[row.index].parent.unwrap_or(0);
@@ -392,7 +407,22 @@ fn details(ui: &mut Ui, p: &ProcInfo, by_pid: &HashMap<u32, &ProcInfo>, now: u64
             );
             field("Command", &p.cmd);
         });
-    explanation(ui, &p.name, &p.group);
+    if let Some(v) = &p.provenance {
+        ui.separator();
+        ui.label(
+            RichText::new(p.trust.label())
+                .strong()
+                .color(trust_color(p.trust)),
+        );
+        ui.add(egui::Label::new(&v.reason).wrap());
+        if let Some(hash) = &v.sha256 {
+            ui.horizontal(|ui| {
+                ui.weak("SHA-256");
+                ui.add(egui::Label::new(RichText::new(hash).monospace().small()).selectable(true));
+            });
+        }
+    }
+    explanation(ui, &p.name, &p.group, &p.unit_description);
 }
 
 pub fn fmt_duration(secs: u64) -> String {
@@ -458,5 +488,52 @@ mod tests {
         let procs = kernel();
         let state = TreeState::new([2]);
         assert_eq!(rows(&procs, &state).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::*;
+    use eframe::egui::{Event, Key, Modifiers, Pos2, RawInput, Rect};
+
+    fn procs() -> Vec<ProcInfo> {
+        (1..5)
+            .map(|pid| ProcInfo {
+                pid,
+                name: format!("proc{pid}"),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// Runs one frame of the tree in a 900x600 window.
+    fn frame(ctx: &egui::Context, state: &mut TreeState, events: Vec<Event>) {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 600.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| show(ui, &procs(), state));
+        });
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn escape_closes_the_pane() {
+        let ctx = egui::Context::default();
+        let mut state = TreeState::new([]);
+        state.selected = Some(2);
+        frame(&ctx, &mut state, vec![]);
+        assert_eq!(state.selected, Some(2));
+        let escape = Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame(&ctx, &mut state, vec![escape]);
+        assert_eq!(state.selected, None);
     }
 }
